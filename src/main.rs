@@ -68,9 +68,11 @@ fn main() {
         ],
     };
 
-    let src = "SELECT id, data FROM table";
+    let src = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "SELECT id, data FROM table".to_string());
 
-    let stmt = statement(src).unwrap().1;
+    let stmt = statement(&src).unwrap().1;
     match stmt {
         Statement::Select(ref rows) => {
             let output = exec_select(&table, rows);
