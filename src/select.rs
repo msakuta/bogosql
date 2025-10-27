@@ -7,13 +7,19 @@ pub struct SelectStmt {
     pub cols: Vec<String>,
     pub table: String,
     pub join: Option<JoinClause>,
-    pub condition: Option<(Term, Term)>,
+    pub condition: Option<Condition>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JoinClause {
     pub table: String,
-    pub condition: (Term, Term),
+    pub condition: Condition,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Condition {
+    Eq(Term, Term),
+    Ne(Term, Term),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,10 +48,15 @@ pub fn exec_select(
             return Err(format!("Table {} not found", join.table).into());
         };
 
-        let (Term::Column(lhs), Term::Column(rhs)) = &join.condition else {
-            return Err(
-                "JOIN's ON condition must have association between tables, not a literal".into(),
-            );
+        let (lhs, rhs) = match &join.condition {
+            Condition::Eq(Term::Column(lhs), Term::Column(rhs)) => (lhs, rhs),
+            Condition::Ne(Term::Column(lhs), Term::Column(rhs)) => (lhs, rhs),
+            _ => {
+                return Err(
+                    "JOIN's ON condition must have association between tables, not a literal"
+                        .into(),
+                );
+            }
         };
 
         println!("table schema: {:?}", table.schema);
@@ -125,8 +136,17 @@ pub fn exec_select(
                         .get(rhs_idx.1 + joined_row * joined_stride),
                 };
 
-                if lhs_val != rhs_val {
-                    continue;
+                match join.condition {
+                    Condition::Eq(_, _) => {
+                        if lhs_val != rhs_val {
+                            continue;
+                        }
+                    }
+                    Condition::Ne(_, _) => {
+                        if lhs_val == rhs_val {
+                            continue;
+                        }
+                    }
                 }
 
                 for col in &cols {
@@ -167,7 +187,8 @@ pub fn exec_select(
     for row in 0..count {
         if let Some(cond) = &sql.condition {
             match cond {
-                (Term::Column(lhs), Term::StrLiteral(rhs)) => {
+                Condition::Eq(Term::Column(lhs), Term::StrLiteral(rhs))
+                | Condition::Ne(Term::Column(lhs), Term::StrLiteral(rhs)) => {
                     let lhs_idx = table
                         .schema
                         .iter()
@@ -183,7 +204,8 @@ pub fn exec_select(
                         continue;
                     }
                 }
-                (Term::StrLiteral(lhs), Term::Column(rhs)) => {
+                Condition::Eq(Term::StrLiteral(lhs), Term::Column(rhs))
+                | Condition::Ne(Term::StrLiteral(lhs), Term::Column(rhs)) => {
                     let rhs_idx = table
                         .schema
                         .iter()

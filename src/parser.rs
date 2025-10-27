@@ -10,7 +10,7 @@ use nom::{
 
 use crate::{
     Statement,
-    select::{JoinClause, Term},
+    select::{Condition, JoinClause, Term},
 };
 
 pub(crate) fn token(i: &str) -> IResult<&str, &str> {
@@ -78,20 +78,27 @@ fn join(i: &str) -> IResult<&str, JoinClause> {
     Ok((r, JoinClause { table, condition }))
 }
 
-fn where_clause(i: &str) -> IResult<&str, (Term, Term)> {
+fn where_clause(i: &str) -> IResult<&str, Condition> {
     let (r, _) = delimited(multispace0, tag_no_case("WHERE"), multispace0).parse(i)?;
 
     conditional(r)
 }
 
-fn conditional(i: &str) -> IResult<&str, (Term, Term)> {
+fn conditional(i: &str) -> IResult<&str, Condition> {
     let (r, lhs) = term(i)?;
 
-    let (r, _) = delimited(multispace0, tag("="), multispace0).parse(r)?;
+    let (r, op) = delimited(multispace0, alt((tag("="), tag("<>"))), multispace0).parse(r)?;
 
     let (r, rhs) = term(r)?;
 
-    Ok((r, (lhs, rhs)))
+    Ok((
+        r,
+        match op {
+            "=" => Condition::Eq(lhs, rhs),
+            "<>" => Condition::Ne(lhs, rhs),
+            _ => unreachable!(),
+        },
+    ))
 }
 
 fn term(i: &str) -> IResult<&str, Term> {
@@ -177,7 +184,7 @@ mod test {
                 table: "table".to_string(),
                 join: Some(JoinClause {
                     table: "table2".to_string(),
-                    condition: (
+                    condition: Condition::Eq(
                         Term::Column("id".to_string()),
                         Term::Column("id2".to_string())
                     ),
