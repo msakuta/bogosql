@@ -17,8 +17,18 @@ pub fn statement(i: &str) -> IResult<&str, Statement> {
     let (r, directive) = token(i)?;
     let (r, stmt) = match directive.to_lowercase().as_str() {
         "select" => {
-            let (r, rows) = rows(r)?;
-            (r, Statement::Select(rows))
+            let (r, cols) = columns(r)?;
+
+            let (r, table) = from_table.parse(r)?;
+
+            (
+                r,
+                Statement::Select(crate::SelectStmt {
+                    cols,
+                    table,
+                    condition: None,
+                }),
+            )
         }
         _ => {
             return Err(nom::Err::Error(nom::error::Error::new(
@@ -31,10 +41,28 @@ pub fn statement(i: &str) -> IResult<&str, Statement> {
     Ok((r, stmt))
 }
 
-fn rows(i: &str) -> IResult<&str, Vec<String>> {
-    let (r, first) = token(i)?;
+fn from_table(i: &str) -> IResult<&str, String> {
+    let (r, _) = delimited(multispace0, tag("FROM"), multispace0).parse(i)?;
+
+    let (r, table) = token(r)?;
+
+    Ok((r, table.to_string()))
+}
+
+fn ident(i: &str) -> IResult<&str, String> {
+    let (r, id) = token(i)?;
+
+    if id == "FROM" {
+        return Err(nom::Err::Error(nom::error::Error::new(i, nom::error::ErrorKind::Verify)));
+    }
+
+    Ok((r, id.to_string()))
+}
+
+fn columns(i: &str) -> IResult<&str, Vec<String>> {
+    let (r, first) = ident(i)?;
     let (r, res) = fold_many0(
-        pair(delimited(multispace0, tag(","), multispace0), token),
+        pair(delimited(multispace0, tag(","), multispace0), ident),
         move || vec![first.to_string()],
         |mut acc, (_, token)| {
             acc.push(token.to_string());
@@ -48,7 +76,7 @@ fn rows(i: &str) -> IResult<&str, Vec<String>> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::Statement;
+    use crate::{SelectStmt, Statement};
 
     #[test]
     fn test_select() {
@@ -56,7 +84,11 @@ mod test {
         assert_eq!(token(src).unwrap().1, "SELECT");
         assert_eq!(
             statement(src).unwrap().1,
-            Statement::Select(vec!["id".to_string(), "data".to_string()])
+            Statement::Select(SelectStmt {
+                cols: vec!["id".to_string(), "data".to_string()],
+                table: "table".to_string(),
+                condition: None,
+            })
         );
     }
 

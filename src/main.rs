@@ -1,13 +1,22 @@
 mod parser;
 
-use std::{error::Error, io::Write};
+use std::{collections::HashMap, error::Error, io::Write};
 
 use crate::parser::statement;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Statement {
-    Select(Vec<String>),
+    Select(SelectStmt),
 }
+
+#[derive(Debug, Clone, PartialEq)]
+struct SelectStmt {
+    cols: Vec<String>,
+    table: String,
+    condition: Option<String>,
+}
+
+type Database = HashMap<String, Table>;
 
 struct Table {
     schema: Vec<RowSchema>,
@@ -18,8 +27,12 @@ struct RowSchema {
     name: String,
 }
 
-fn exec_select(table: &Table, rows: &[String]) -> Result<String, Box<dyn Error>> {
-    let Some(indices) = rows
+fn exec_select(db: &Database, sql: &SelectStmt) -> Result<String, Box<dyn Error>> {
+    let Some(table) = db.get(&sql.table) else {
+        return Err(format!("Table {} not found", sql.table).into());
+    };
+    let Some(indices) = sql
+        .cols
         .iter()
         .map(|row| {
             table
@@ -68,14 +81,40 @@ fn main() {
         ],
     };
 
+    let phonebook = Table {
+        schema: vec![
+            RowSchema {
+                name: "id".to_string(),
+            },
+            RowSchema {
+                name: "name".to_string(),
+            },
+            RowSchema {
+                name: "phone".to_string(),
+            },
+        ],
+        data: vec![
+            "101".to_string(),
+            "Ada".to_string(),
+            "002-2232-4564".to_string(),
+            "102".to_string(),
+            "Alan".to_string(),
+            "004-3515-1622".to_string(),
+        ]
+    };
+
+    let mut db = HashMap::new();
+    db.insert("main".to_string(), table);
+    db.insert("phonebook".to_string(), phonebook);
+
     let src = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "SELECT id, data FROM table".to_string());
+        .unwrap_or_else(|| "SELECT id, data FROM main".to_string());
 
     let stmt = statement(&src).unwrap().1;
     match stmt {
         Statement::Select(ref rows) => {
-            let output = exec_select(&table, rows);
+            let output = exec_select(&db, rows);
             match output {
                 Ok(out) => println!("Result: \n{out}"),
                 Err(e) => eprintln!("Error: {e}"),
