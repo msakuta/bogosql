@@ -4,10 +4,16 @@ use crate::Database;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectStmt {
-    pub cols: Vec<String>,
+    pub cols: Cols,
     pub table: String,
     pub join: Option<JoinClause>,
     pub condition: Option<Condition>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Cols {
+    Wildcard,
+    List(Vec<String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,27 +68,41 @@ pub fn exec_select(
         println!("table schema: {:?}", table.schema);
         println!("joined table schema: {:?}", joined_table.schema);
 
-        let cols = sql
-            .cols
-            .iter()
-            .map(|col| {
-                table
-                    .schema
-                    .iter()
-                    .enumerate()
-                    .find(|(_, s)| s.name == *col)
-                    .map(|(i, _)| (TableSide::First, i))
-                    .or_else(|| {
-                        joined_table
-                            .schema
-                            .iter()
-                            .enumerate()
-                            .find(|(_, c)| c.name == *col)
-                            .map(|(i, _)| (TableSide::Second, i))
-                    })
-                    .ok_or_else(|| format!("Column \"{}\" not found", col))
-            })
-            .collect::<Result<Vec<_>, String>>()?;
+        let cols = match &sql.cols {
+            Cols::Wildcard => table
+                .schema
+                .iter()
+                .enumerate()
+                .map(|(i, _)| (TableSide::First, i))
+                .chain(
+                    joined_table
+                        .schema
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| (TableSide::Second, i)),
+                )
+                .collect(),
+            Cols::List(cols) => cols
+                .iter()
+                .map(|col| {
+                    table
+                        .schema
+                        .iter()
+                        .enumerate()
+                        .find(|(_, s)| s.name == *col)
+                        .map(|(i, _)| (TableSide::First, i))
+                        .or_else(|| {
+                            joined_table
+                                .schema
+                                .iter()
+                                .enumerate()
+                                .find(|(_, c)| c.name == *col)
+                                .map(|(i, _)| (TableSide::Second, i))
+                        })
+                        .ok_or_else(|| format!("Column \"{}\" not found", col))
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+        };
 
         let lhs_idx = table
             .schema
@@ -168,19 +188,21 @@ pub fn exec_select(
         return Ok(());
     }
 
-    let cols = sql
-        .cols
-        .iter()
-        .map(|col| {
-            table
-                .schema
-                .iter()
-                .enumerate()
-                .find(|(_, s)| s.name == *col)
-                .map(|(i, _)| i)
-                .ok_or_else(|| format!("Column \"{}\" not found", col))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
+    let cols = match &sql.cols {
+        Cols::Wildcard => table.schema.iter().enumerate().map(|(i, _)| i).collect(),
+        Cols::List(cols) => cols
+            .iter()
+            .map(|col| {
+                table
+                    .schema
+                    .iter()
+                    .enumerate()
+                    .find(|(_, s)| s.name == *col)
+                    .map(|(i, _)| i)
+                    .ok_or_else(|| format!("Column \"{}\" not found", col))
+            })
+            .collect::<Result<Vec<_>, String>>()?,
+    };
 
     let count = table.data.len() / table.schema.len();
     let stride = table.schema.len();
@@ -200,7 +222,7 @@ pub fn exec_select(
                         .data
                         .get(lhs_idx + row * stride)
                         .ok_or_else(|| "Column index not found")?;
-                    if lhs_val != rhs {
+                    if !matches!(cond, Condition::Eq(_, _)) ^ (lhs_val != rhs) {
                         continue;
                     }
                 }
@@ -217,7 +239,7 @@ pub fn exec_select(
                         .data
                         .get(rhs_idx + row * stride)
                         .ok_or_else(|| "Column index not found")?;
-                    if lhs != rhs_val {
+                    if !matches!(cond, Condition::Eq(_, _)) ^ (lhs != rhs_val) {
                         continue;
                     }
                 }

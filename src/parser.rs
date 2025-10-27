@@ -10,7 +10,7 @@ use nom::{
 
 use crate::{
     Statement,
-    select::{Condition, JoinClause, Term},
+    select::{Cols, Condition, JoinClause, Term},
 };
 
 pub(crate) fn token(i: &str) -> IResult<&str, &str> {
@@ -29,7 +29,7 @@ pub fn statement(i: &str) -> IResult<&str, Statement> {
     let (r, directive) = token(i)?;
     let (r, stmt) = match directive.to_lowercase().as_str() {
         "select" => {
-            let (r, cols) = columns(r)?;
+            let (r, cols) = alt((columns_wildcard, columns)).parse(r)?;
 
             let (r, table) = from_table(r)?;
 
@@ -139,7 +139,12 @@ fn ident(i: &str) -> IResult<&str, String> {
     Ok((r, id.to_string()))
 }
 
-fn columns(i: &str) -> IResult<&str, Vec<String>> {
+fn columns_wildcard(i: &str) -> IResult<&str, Cols> {
+    let (r, _) = delimited(multispace0, tag("*"), multispace0).parse(i)?;
+    Ok((r, Cols::Wildcard))
+}
+
+fn columns(i: &str) -> IResult<&str, Cols> {
     let (r, first) = ident(i)?;
     let (r, res) = fold_many0(
         pair(delimited(multispace0, tag(","), multispace0), ident),
@@ -150,7 +155,7 @@ fn columns(i: &str) -> IResult<&str, Vec<String>> {
         },
     )
     .parse(r)?;
-    Ok((r, res))
+    Ok((r, Cols::List(res)))
 }
 
 #[cfg(test)]
@@ -165,7 +170,7 @@ mod test {
         assert_eq!(
             statement(src).unwrap().1,
             Statement::Select(SelectStmt {
-                cols: vec!["id".to_string(), "data".to_string()],
+                cols: Cols::List(vec!["id".to_string(), "data".to_string()]),
                 table: "table".to_string(),
                 join: None,
                 condition: None,
@@ -180,7 +185,7 @@ mod test {
         assert_eq!(
             statement(src).unwrap().1,
             Statement::Select(SelectStmt {
-                cols: vec!["id".to_string(), "data".to_string()],
+                cols: Cols::List(vec!["id".to_string(), "data".to_string()]),
                 table: "table".to_string(),
                 join: Some(JoinClause {
                     table: "table2".to_string(),
