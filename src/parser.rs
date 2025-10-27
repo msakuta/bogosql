@@ -8,7 +8,10 @@ use nom::{
     sequence::{delimited, pair},
 };
 
-use crate::{JoinClause, Statement, Term};
+use crate::{
+    Statement,
+    select::{JoinClause, Term},
+};
 
 pub(crate) fn token(i: &str) -> IResult<&str, &str> {
     delimited(
