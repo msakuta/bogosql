@@ -1,17 +1,25 @@
 use nom::{
     IResult, Parser,
+    branch::alt,
     bytes::complete::{tag, tag_no_case},
-    character::complete::{alphanumeric1, multispace0, none_of},
+    character::complete::{alpha1, alphanumeric1, multispace0, none_of},
     combinator::{opt, recognize},
     multi::{fold_many0, many0},
     sequence::{delimited, pair},
 };
 
-use crate::{Statement, Term};
+use crate::{JoinClause, Statement, Term};
 
 pub(crate) fn token(i: &str) -> IResult<&str, &str> {
-    let (r, ident) = delimited(multispace0, alphanumeric1, multispace0).parse(i)?;
-    Ok((r, ident))
+    delimited(
+        multispace0,
+        recognize(pair(
+            alt((alpha1, tag("_"))),
+            many0(alt((alphanumeric1, tag("_")))),
+        )),
+        multispace0,
+    )
+    .parse(i)
 }
 
 pub fn statement(i: &str) -> IResult<&str, Statement> {
@@ -22,6 +30,8 @@ pub fn statement(i: &str) -> IResult<&str, Statement> {
 
             let (r, table) = from_table(r)?;
 
+            let (r, join) = opt(join).parse(r)?;
+
             let (r, condition) = opt(where_clause).parse(r)?;
 
             (
@@ -29,6 +39,7 @@ pub fn statement(i: &str) -> IResult<&str, Statement> {
                 Statement::Select(crate::SelectStmt {
                     cols,
                     table,
+                    join,
                     condition,
                 }),
             )
@@ -52,10 +63,26 @@ fn from_table(i: &str) -> IResult<&str, String> {
     Ok((r, table.to_string()))
 }
 
+fn join(i: &str) -> IResult<&str, JoinClause> {
+    let (r, _) = delimited(multispace0, tag_no_case("INNER JOIN"), multispace0).parse(i)?;
+
+    let (r, table) = ident(r)?;
+
+    let (r, _) = delimited(multispace0, tag_no_case("ON"), multispace0).parse(r)?;
+
+    let (r, condition) = conditional(r)?;
+
+    Ok((r, JoinClause { table, condition }))
+}
+
 fn where_clause(i: &str) -> IResult<&str, (Term, Term)> {
     let (r, _) = delimited(multispace0, tag_no_case("WHERE"), multispace0).parse(i)?;
 
-    let (r, lhs) = term(r)?;
+    conditional(r)
+}
+
+fn conditional(i: &str) -> IResult<&str, (Term, Term)> {
+    let (r, lhs) = term(i)?;
 
     let (r, _) = delimited(multispace0, tag("="), multispace0).parse(r)?;
 
@@ -130,6 +157,28 @@ mod test {
             Statement::Select(SelectStmt {
                 cols: vec!["id".to_string(), "data".to_string()],
                 table: "table".to_string(),
+                join: None,
+                condition: None,
+            })
+        );
+    }
+
+    #[test]
+    fn test_select_join() {
+        let src = "SELECT id, data FROM table INNER JOIN table2 ON id = id2";
+        assert_eq!(token(src).unwrap().1, "SELECT");
+        assert_eq!(
+            statement(src).unwrap().1,
+            Statement::Select(SelectStmt {
+                cols: vec!["id".to_string(), "data".to_string()],
+                table: "table".to_string(),
+                join: Some(JoinClause {
+                    table: "table2".to_string(),
+                    condition: (
+                        Term::Column("id".to_string()),
+                        Term::Column("id2".to_string())
+                    ),
+                }),
                 condition: None,
             })
         );

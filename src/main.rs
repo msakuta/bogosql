@@ -15,7 +15,14 @@ enum Statement {
 struct SelectStmt {
     cols: Vec<String>,
     table: String,
+    join: Option<JoinClause>,
     condition: Option<(Term, Term)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct JoinClause {
+    table: String,
+    condition: (Term, Term),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,19 +33,143 @@ enum Term {
 
 type Database = HashMap<String, Table>;
 
+#[derive(Debug)]
 struct Table {
     schema: Vec<RowSchema>,
     data: Vec<String>,
 }
 
+#[derive(Debug)]
 struct RowSchema {
     name: String,
 }
 
-fn exec_select(db: &Database, sql: &SelectStmt) -> Result<String, Box<dyn Error>> {
+#[derive(Debug, Clone, Copy)]
+enum TableSide {
+    First,
+    Second,
+}
+
+fn exec_select(
+    out: &mut impl Write,
+    db: &Database,
+    sql: &SelectStmt,
+) -> Result<(), Box<dyn Error>> {
     let Some(table) = db.get(&sql.table) else {
         return Err(format!("Table {} not found", sql.table).into());
     };
+
+    if let Some(join) = &sql.join {
+        let Some(joined_table) = db.get(&join.table) else {
+            return Err(format!("Table {} not found", join.table).into());
+        };
+
+        let (Term::Column(lhs), Term::Column(rhs)) = &join.condition else {
+            return Err(
+                "JOIN's ON condition must have association between tables, not a literal".into(),
+            );
+        };
+
+        println!("table schema: {:?}", table.schema);
+        println!("joined table schema: {:?}", joined_table.schema);
+
+        let cols = sql
+            .cols
+            .iter()
+            .map(|col| {
+                table
+                    .schema
+                    .iter()
+                    .enumerate()
+                    .find(|(_, s)| s.name == *col)
+                    .map(|(i, _)| (TableSide::First, i))
+                    .or_else(|| {
+                        joined_table
+                            .schema
+                            .iter()
+                            .enumerate()
+                            .find(|(_, c)| c.name == *col)
+                            .map(|(i, _)| (TableSide::Second, i))
+                    })
+                    .ok_or_else(|| format!("Column \"{}\" not found", col))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+
+        let lhs_idx = table
+            .schema
+            .iter()
+            .enumerate()
+            .find(|(_, c)| c.name == *lhs)
+            .map(|(i, _)| (TableSide::First, i))
+            .or_else(|| {
+                joined_table
+                    .schema
+                    .iter()
+                    .enumerate()
+                    .find(|(_, c)| c.name == *lhs)
+                    .map(|(i, _)| (TableSide::Second, i))
+            })
+            .ok_or_else(|| format!("Neither table has column {lhs} in join clause"))?;
+
+        let rhs_idx = table
+            .schema
+            .iter()
+            .enumerate()
+            .find(|(_, c)| c.name == *rhs)
+            .map(|(i, _)| (TableSide::First, i))
+            .or_else(|| {
+                joined_table
+                    .schema
+                    .iter()
+                    .enumerate()
+                    .find(|(_, c)| c.name == *rhs)
+                    .map(|(i, _)| (TableSide::Second, i))
+            })
+            .ok_or_else(|| format!("Neither table has column {rhs} in join clause"))?;
+
+        let count = table.data.len() / table.schema.len();
+        let stride = table.schema.len();
+        let joined_count = joined_table.data.len() / joined_table.schema.len();
+        let joined_stride = joined_table.schema.len();
+        for row in 0..count {
+            for joined_row in 0..joined_count {
+                let lhs_val = match lhs_idx.0 {
+                    TableSide::First => table.data.get(lhs_idx.1 + row * stride),
+                    TableSide::Second => joined_table
+                        .data
+                        .get(lhs_idx.1 + joined_row * joined_stride),
+                };
+
+                let rhs_val = match rhs_idx.0 {
+                    TableSide::First => table.data.get(rhs_idx.1 + row * stride),
+                    TableSide::Second => joined_table
+                        .data
+                        .get(rhs_idx.1 + joined_row * joined_stride),
+                };
+
+                if lhs_val != rhs_val {
+                    continue;
+                }
+
+                for col in &cols {
+                    let cell = match col.0 {
+                        TableSide::First => table.data.get(col.1 + row * stride),
+                        TableSide::Second => {
+                            joined_table.data.get(col.1 + joined_row * joined_stride)
+                        }
+                    };
+                    if let Some(cell) = cell {
+                        write!(out, "{cell},")?;
+                    }
+                }
+                writeln!(out, "")?;
+            }
+            continue;
+        }
+
+        return Ok(());
+    }
+
     let cols = sql
         .cols
         .iter()
@@ -53,7 +184,6 @@ fn exec_select(db: &Database, sql: &SelectStmt) -> Result<String, Box<dyn Error>
         })
         .collect::<Result<Vec<_>, String>>()?;
 
-    let mut buf = vec![];
     let count = table.data.len() / table.schema.len();
     let stride = table.schema.len();
     for row in 0..count {
@@ -100,12 +230,12 @@ fn exec_select(db: &Database, sql: &SelectStmt) -> Result<String, Box<dyn Error>
         }
         for col in &cols {
             if let Some(cell) = table.data.get(col + row * stride) {
-                write!(&mut buf, "{cell},")?;
+                write!(out, "{cell},")?;
             }
         }
-        writeln!(&mut buf, "")?;
+        writeln!(out, "")?;
     }
-    Ok(String::from_utf8(buf)?)
+    Ok(())
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -153,7 +283,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let authors = Table {
         schema: vec![
             RowSchema {
-                name: "id".to_string(),
+                name: "author_id".to_string(),
             },
             RowSchema {
                 name: "name".to_string(),
@@ -170,10 +300,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let books = Table {
         schema: vec![
             RowSchema {
-                name: "id".to_string(),
+                name: "book_id".to_string(),
             },
             RowSchema {
-                name: "name".to_string(),
+                name: "title".to_string(),
             },
             RowSchema {
                 name: "author".to_string(),
@@ -210,11 +340,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match stmt {
         Statement::Select(ref rows) => {
-            let output = exec_select(&db, rows);
-            match output {
-                Ok(out) => println!("Result: \n{out}"),
-                Err(e) => eprintln!("Error: {e}"),
-            }
+            let mut buf = vec![];
+            let _ = exec_select(&mut buf, &db, rows)?;
+            let out = String::from_utf8(buf)?;
+            println!("Result: \n{out}");
         }
     }
 

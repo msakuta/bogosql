@@ -11,3 +11,19 @@ There is a hardcoded tables and there is no way to update them at the moment.
 
 * Install Rust.
 * `cargo r -- "SELECT id, name, phone FROM phonebook"`
+
+## Examples
+
+Inner join
+
+```
+"SELECT author_id, title, name FROM authors INNER JOIN books ON author_id = author"
+```
+
+Result:
+
+```
+1,I, Robot,Asimov,
+1,Cave of Steel,Asimov,
+2,Moon's Harsh Mistress,Heinlein,
+```
