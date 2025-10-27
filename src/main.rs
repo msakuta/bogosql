@@ -1,3 +1,5 @@
+use std::{error::Error, io::Write};
+
 use nom::{
     IResult, Parser,
     bytes::complete::tag,
@@ -57,6 +59,36 @@ struct RowSchema {
     name: String,
 }
 
+fn exec_select(table: &Table, rows: &[String]) -> Result<String, Box<dyn Error>> {
+    let Some(indices) = rows
+        .iter()
+        .map(|row| {
+            table
+                .schema
+                .iter()
+                .enumerate()
+                .find(|(_, s)| s.name == *row)
+                .map(|(i, _)| i)
+        })
+        .collect::<Option<Vec<_>>>()
+    else {
+        return Err("Column not found".into());
+    };
+
+    let mut buf = vec![];
+    let count = table.data.len() / table.schema.len();
+    let stride = table.schema.len();
+    for row in 0..count {
+        for col in &indices {
+            if let Some(cell) = table.data.get(col + row * stride) {
+                write!(&mut buf, "{cell},")?;
+            }
+        }
+        writeln!(&mut buf, "")?;
+    }
+    Ok(String::from_utf8(buf)?)
+}
+
 fn main() {
     let table = Table {
         schema: vec![
@@ -72,11 +104,24 @@ fn main() {
             "Hello".to_string(),
             "2".to_string(),
             "World".to_string(),
+            "3".to_string(),
+            "!".to_string(),
         ],
     };
     let src = "SELECT id, data FROM table";
     println!("{:?}", token(src));
     println!("{:?}", statement(src));
-    let src = "SELOCT id, data FROM table";
-    println!("{:?}", statement(src));
+    // let src = "SELOCT id, data FROM table";
+    // println!("{:?}", statement(src));
+
+    let stmt = statement(src).unwrap().1;
+    match stmt {
+        Statement::Select(ref rows) => {
+            let output = exec_select(&table, rows);
+            match output {
+                Ok(out) => println!("Result: \n{out}"),
+                Err(e) => eprintln!("Error: {e}"),
+            }
+        }
+    }
 }
