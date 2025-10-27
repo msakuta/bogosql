@@ -1,51 +1,10 @@
+mod parser;
+
 use std::{error::Error, io::Write};
 
-use nom::{
-    IResult, Parser,
-    bytes::complete::tag,
-    character::complete::{alphanumeric1, multispace0},
-    multi::fold_many0,
-    sequence::{delimited, pair},
-};
+use crate::parser::statement;
 
-fn token(i: &str) -> IResult<&str, &str> {
-    let (r, ident) = delimited(multispace0, alphanumeric1, multispace0).parse(i)?;
-    Ok((r, ident))
-}
-
-fn statement(i: &str) -> IResult<&str, Statement> {
-    let (r, directive) = token(i)?;
-    let (r, stmt) = match directive.to_lowercase().as_str() {
-        "select" => {
-            let (r, rows) = rows(r)?;
-            (r, Statement::Select(rows))
-        }
-        _ => {
-            return Err(nom::Err::Error(nom::error::Error::new(
-                r,
-                nom::error::ErrorKind::Verify,
-            )));
-        }
-    };
-
-    Ok((r, stmt))
-}
-
-fn rows(i: &str) -> IResult<&str, Vec<String>> {
-    let (r, first) = token(i)?;
-    let (r, res) = fold_many0(
-        pair(delimited(multispace0, tag(","), multispace0), token),
-        move || vec![first.to_string()],
-        |mut acc, (_, token)| {
-            acc.push(token.to_string());
-            acc
-        },
-    )
-    .parse(r)?;
-    Ok((r, res))
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum Statement {
     Select(Vec<String>),
 }
@@ -108,11 +67,8 @@ fn main() {
             "!".to_string(),
         ],
     };
+
     let src = "SELECT id, data FROM table";
-    println!("{:?}", token(src));
-    println!("{:?}", statement(src));
-    // let src = "SELOCT id, data FROM table";
-    // println!("{:?}", statement(src));
 
     let stmt = statement(src).unwrap().1;
     match stmt {
