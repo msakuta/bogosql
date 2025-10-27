@@ -2,6 +2,8 @@ mod parser;
 
 use std::{collections::HashMap, error::Error, io::Write};
 
+use nom::Finish;
+
 use crate::parser::statement;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -106,7 +108,7 @@ fn exec_select(db: &Database, sql: &SelectStmt) -> Result<String, Box<dyn Error>
     Ok(String::from_utf8(buf)?)
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let table = Table {
         schema: vec![
             RowSchema {
@@ -200,7 +202,12 @@ fn main() {
         .nth(1)
         .unwrap_or_else(|| "SELECT id, data FROM main".to_string());
 
-    let stmt = dbg!(statement(&src).unwrap().1);
+    let (rest, stmt) = statement(&src).finish().unwrap();
+
+    if rest != "" {
+        return Err(format!("SQL has not finished: extra string: \"{rest}\"").into());
+    }
+
     match stmt {
         Statement::Select(ref rows) => {
             let output = exec_select(&db, rows);
@@ -210,4 +217,6 @@ fn main() {
             }
         }
     }
+
+    Ok(())
 }
