@@ -7,7 +7,7 @@ Implementing a parser (and preferably executor) is the best way to understand a 
 
 ## How to run
 
-There is a hardcoded tables and there is no way to update them at the moment.
+The tables are defined in CSV files in `data` directory, whose file names without extension being table names.
 
 * Install Rust.
 * `cargo r -- "SELECT id, name, phone FROM phonebook"`

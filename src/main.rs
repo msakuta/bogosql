@@ -1,7 +1,7 @@
 mod parser;
 mod select;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fs::read_dir};
 
 use nom::Finish;
 
@@ -36,129 +36,36 @@ struct RowSchema {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let table = Table {
-        schema: vec![
-            RowSchema {
-                name: "id".to_string(),
-            },
-            RowSchema {
-                name: "data".to_string(),
-            },
-        ],
-        data: vec![
-            "1".to_string(),
-            "Hello".to_string(),
-            "2".to_string(),
-            "World".to_string(),
-            "3".to_string(),
-            "!".to_string(),
-        ],
-    };
-
-    let phonebook = Table {
-        schema: vec![
-            RowSchema {
-                name: "id".to_string(),
-            },
-            RowSchema {
-                name: "name".to_string(),
-            },
-            RowSchema {
-                name: "phone".to_string(),
-            },
-        ],
-        data: vec![
-            "101".to_string(),
-            "Ada".to_string(),
-            "002-2232-4564".to_string(),
-            "102".to_string(),
-            "Alan".to_string(),
-            "004-3515-1622".to_string(),
-        ],
-    };
-
-    let authors = Table {
-        schema: vec![
-            RowSchema {
-                name: "author_id".to_string(),
-            },
-            RowSchema {
-                name: "name".to_string(),
-            },
-        ],
-        data: vec![
-            "1".to_string(),
-            "Asimov".to_string(),
-            "2".to_string(),
-            "Heinlein".to_string(),
-        ],
-    };
-
-    let books = Table {
-        schema: vec![
-            RowSchema {
-                name: "book_id".to_string(),
-            },
-            RowSchema {
-                name: "title".to_string(),
-            },
-            RowSchema {
-                name: "author".to_string(),
-            },
-        ],
-        data: vec![
-            "101".to_string(),
-            "I, Robot".to_string(),
-            "1".to_string(),
-            "102".to_string(),
-            "Cave of Steel".to_string(),
-            "1".to_string(),
-            "201".to_string(),
-            "Moon's Harsh Mistress".to_string(),
-            "2".to_string(),
-            "202".to_string(),
-            "Starship Troopers".to_string(),
-            "2".to_string(),
-        ],
-    };
-
-    let pages = Table {
-        schema: vec![
-            RowSchema {
-                name: "book".to_string(),
-            },
-            RowSchema {
-                name: "page".to_string(),
-            },
-            RowSchema {
-                name: "text".to_string(),
-            },
-        ],
-        data: vec![
-            "101".to_string(),
-            "1".to_string(),
-            "Title".to_string(),
-            "101".to_string(),
-            "2".to_string(),
-            "Preface".to_string(),
-            "201".to_string(),
-            "1".to_string(),
-            "Mistress".to_string(),
-            "201".to_string(),
-            "2".to_string(),
-            "is".to_string(),
-            "201".to_string(),
-            "3".to_string(),
-            "harsh".to_string(),
-        ],
-    };
-
     let mut db = HashMap::new();
-    db.insert("main".to_string(), table);
-    db.insert("phonebook".to_string(), phonebook);
-    db.insert("authors".to_string(), authors);
-    db.insert("books".to_string(), books);
-    db.insert("pages".to_string(), pages);
+
+    for entry in read_dir("data")? {
+        if let Ok(f) = entry
+            && let Ok(t) = f.file_type()
+            && t.is_file()
+        {
+            let mut csv = csv::Reader::from_path(f.path())?;
+            let schema = csv
+                .headers()?
+                .iter()
+                .map(|r| RowSchema {
+                    name: r.trim().to_string(),
+                })
+                .collect::<Vec<_>>();
+            let mut data = vec![];
+            for record in csv.records() {
+                if let Ok(r) = record {
+                    for cell in r.iter() {
+                        data.push(cell.trim().to_string());
+                    }
+                }
+            }
+            let path = f.path();
+            let Some(name) = path.file_stem() else {
+                continue;
+            };
+            db.insert(name.to_string_lossy().to_string(), Table { schema, data });
+        }
+    }
 
     let src = std::env::args()
         .nth(1)
