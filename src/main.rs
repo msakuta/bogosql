@@ -23,6 +23,13 @@ struct Table {
     data: Vec<String>,
 }
 
+impl Table {
+    fn get(&self, row: usize, col: usize) -> Option<&String> {
+        let cols = self.schema.len();
+        self.data.get(col + row * cols)
+    }
+}
+
 #[derive(Debug)]
 struct RowSchema {
     name: String,
@@ -108,6 +115,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "1".to_string(),
             "201".to_string(),
             "Moon's Harsh Mistress".to_string(),
+            "2".to_string(),
+            "202".to_string(),
+            "Starship Troopers".to_string(),
             "2".to_string(),
         ],
     };

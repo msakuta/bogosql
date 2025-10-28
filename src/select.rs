@@ -1,6 +1,6 @@
 use std::{error::Error, io::Write};
 
-use crate::Database;
+use crate::{Database, Table};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectStmt {
@@ -35,9 +35,36 @@ pub enum Term {
 }
 
 #[derive(Debug, Clone, Copy)]
-enum TableSide {
-    First,
-    Second,
+struct ColRef<'a> {
+    table: &'a Table,
+    /// If the query has joins, this index is incremented for each join.
+    joindex: usize,
+    col: usize,
+}
+
+impl<'a> ColRef<'a> {
+    fn new(table: &'a Table, joindex: usize, col: usize) -> Self {
+        Self {
+            table,
+            joindex,
+            col,
+        }
+    }
+
+    fn get(&self, row_indices: &[usize]) -> Option<&String> {
+        row_indices
+            .get(self.joindex)
+            .and_then(|row| self.table.get(*row, self.col))
+    }
+}
+
+fn find_col<'a>(table: &'a Table, joindex: usize, name: &str) -> Option<ColRef<'a>> {
+    table
+        .schema
+        .iter()
+        .enumerate()
+        .find(|(_, s)| s.name == name)
+        .map(|(i, _)| ColRef::new(table, joindex, i))
 }
 
 pub fn exec_select(
@@ -73,109 +100,47 @@ pub fn exec_select(
                 .schema
                 .iter()
                 .enumerate()
-                .map(|(i, _)| (TableSide::First, i))
+                .map(|(i, _)| ColRef::new(table, 0, i))
                 .chain(
                     joined_table
                         .schema
                         .iter()
                         .enumerate()
-                        .map(|(i, _)| (TableSide::Second, i)),
+                        .map(|(i, _)| ColRef::new(joined_table, 1, i)),
                 )
                 .collect(),
             Cols::List(cols) => cols
                 .iter()
                 .map(|col| {
-                    table
-                        .schema
-                        .iter()
-                        .enumerate()
-                        .find(|(_, s)| s.name == *col)
-                        .map(|(i, _)| (TableSide::First, i))
-                        .or_else(|| {
-                            joined_table
-                                .schema
-                                .iter()
-                                .enumerate()
-                                .find(|(_, c)| c.name == *col)
-                                .map(|(i, _)| (TableSide::Second, i))
-                        })
+                    find_col(table, 0, col)
+                        .or_else(|| find_col(joined_table, 1, col))
                         .ok_or_else(|| format!("Column \"{}\" not found", col))
                 })
                 .collect::<Result<Vec<_>, String>>()?,
         };
 
-        let lhs_idx = table
-            .schema
-            .iter()
-            .enumerate()
-            .find(|(_, c)| c.name == *lhs)
-            .map(|(i, _)| (TableSide::First, i))
-            .or_else(|| {
-                joined_table
-                    .schema
-                    .iter()
-                    .enumerate()
-                    .find(|(_, c)| c.name == *lhs)
-                    .map(|(i, _)| (TableSide::Second, i))
-            })
+        let lhs_idx = find_col(table, 0, lhs)
+            .or_else(|| find_col(joined_table, 1, lhs))
             .ok_or_else(|| format!("Neither table has column {lhs} in join clause"))?;
 
-        let rhs_idx = table
-            .schema
-            .iter()
-            .enumerate()
-            .find(|(_, c)| c.name == *rhs)
-            .map(|(i, _)| (TableSide::First, i))
-            .or_else(|| {
-                joined_table
-                    .schema
-                    .iter()
-                    .enumerate()
-                    .find(|(_, c)| c.name == *rhs)
-                    .map(|(i, _)| (TableSide::Second, i))
-            })
+        let rhs_idx = find_col(table, 0, rhs)
+            .or_else(|| find_col(joined_table, 1, rhs))
             .ok_or_else(|| format!("Neither table has column {rhs} in join clause"))?;
 
         let count = table.data.len() / table.schema.len();
-        let stride = table.schema.len();
         let joined_count = joined_table.data.len() / joined_table.schema.len();
-        let joined_stride = joined_table.schema.len();
         for row in 0..count {
             for joined_row in 0..joined_count {
-                let lhs_val = match lhs_idx.0 {
-                    TableSide::First => table.data.get(lhs_idx.1 + row * stride),
-                    TableSide::Second => joined_table
-                        .data
-                        .get(lhs_idx.1 + joined_row * joined_stride),
-                };
+                let row_cursor = [row, joined_row];
+                let lhs_val = lhs_idx.get(&row_cursor);
+                let rhs_val = rhs_idx.get(&row_cursor);
 
-                let rhs_val = match rhs_idx.0 {
-                    TableSide::First => table.data.get(rhs_idx.1 + row * stride),
-                    TableSide::Second => joined_table
-                        .data
-                        .get(rhs_idx.1 + joined_row * joined_stride),
-                };
-
-                match join.condition {
-                    Condition::Eq(_, _) => {
-                        if lhs_val != rhs_val {
-                            continue;
-                        }
-                    }
-                    Condition::Ne(_, _) => {
-                        if lhs_val == rhs_val {
-                            continue;
-                        }
-                    }
+                if matches!(join.condition, Condition::Eq(_, _)) ^ (lhs_val == rhs_val) {
+                    continue;
                 }
 
                 for col in &cols {
-                    let cell = match col.0 {
-                        TableSide::First => table.data.get(col.1 + row * stride),
-                        TableSide::Second => {
-                            joined_table.data.get(col.1 + joined_row * joined_stride)
-                        }
-                    };
+                    let cell = col.get(&row_cursor);
                     if let Some(cell) = cell {
                         write!(out, "{cell},")?;
                     }
