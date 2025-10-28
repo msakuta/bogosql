@@ -33,7 +33,7 @@ pub fn statement(i: &str) -> IResult<&str, Statement> {
 
             let (r, table) = from_table(r)?;
 
-            let (r, join) = opt(join).parse(r)?;
+            let (r, join) = many0(join).parse(r)?;
 
             let (r, condition) = opt(where_clause).parse(r)?;
 
@@ -172,7 +172,7 @@ mod test {
             Statement::Select(SelectStmt {
                 cols: Cols::List(vec!["id".to_string(), "data".to_string()]),
                 table: "table".to_string(),
-                join: None,
+                join: vec![],
                 condition: None,
             })
         );
@@ -187,13 +187,13 @@ mod test {
             Statement::Select(SelectStmt {
                 cols: Cols::List(vec!["id".to_string(), "data".to_string()]),
                 table: "table".to_string(),
-                join: Some(JoinClause {
+                join: vec![JoinClause {
                     table: "table2".to_string(),
                     condition: Condition::Eq(
                         Term::Column("id".to_string()),
                         Term::Column("id2".to_string())
                     ),
-                }),
+                }],
                 condition: None,
             })
         );

@@ -122,11 +122,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ],
     };
 
+    let pages = Table {
+        schema: vec![
+            RowSchema {
+                name: "book".to_string(),
+            },
+            RowSchema {
+                name: "page".to_string(),
+            },
+            RowSchema {
+                name: "text".to_string(),
+            },
+        ],
+        data: vec![
+            "101".to_string(),
+            "1".to_string(),
+            "Title".to_string(),
+            "101".to_string(),
+            "2".to_string(),
+            "Preface".to_string(),
+            "201".to_string(),
+            "1".to_string(),
+            "Mistress".to_string(),
+            "201".to_string(),
+            "2".to_string(),
+            "is".to_string(),
+            "201".to_string(),
+            "3".to_string(),
+            "harsh".to_string(),
+        ],
+    };
+
     let mut db = HashMap::new();
     db.insert("main".to_string(), table);
     db.insert("phonebook".to_string(), phonebook);
     db.insert("authors".to_string(), authors);
     db.insert("books".to_string(), books);
+    db.insert("pages".to_string(), pages);
 
     let src = std::env::args()
         .nth(1)

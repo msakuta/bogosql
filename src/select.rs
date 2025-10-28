@@ -6,7 +6,7 @@ use crate::{Database, Table};
 pub struct SelectStmt {
     pub cols: Cols,
     pub table: String,
-    pub join: Option<JoinClause>,
+    pub join: Vec<JoinClause>,
     pub condition: Option<Condition>,
 }
 
@@ -58,13 +58,38 @@ impl<'a> ColRef<'a> {
     }
 }
 
-fn find_col<'a>(table: &'a Table, joindex: usize, name: &str) -> Option<ColRef<'a>> {
-    table
-        .schema
-        .iter()
-        .enumerate()
-        .find(|(_, s)| s.name == name)
-        .map(|(i, _)| ColRef::new(table, joindex, i))
+fn find_col<'a>(tables: &[&'a Table], name: &str) -> Option<ColRef<'a>> {
+    tables.iter().enumerate().find_map(|(joindex, table)| {
+        table
+            .schema
+            .iter()
+            .enumerate()
+            .find(|(_, s)| s.name == name)
+            .map(|(i, _)| ColRef::new(table, joindex, i))
+    })
+}
+
+/// Increment the row cursor, similar to the add arithmetics.
+/// Returns true while the incremented value is valid
+fn incr_row_cursor(row_cursor: &mut [usize], row_counts: &[usize]) -> bool {
+    let mut carry = true;
+    let mut digit = row_cursor.len() - 1;
+    while carry {
+        let row_index = row_cursor.get_mut(digit).unwrap();
+        let row_count = *row_counts.get(digit).unwrap();
+        carry = row_count <= *row_index + 1;
+        if carry {
+            if let Some(prev) = digit.checked_sub(1) {
+                *row_index = 0;
+                digit = prev;
+                continue;
+            } else {
+                return false;
+            }
+        }
+        *row_index = (*row_index + 1) % row_count;
+    }
+    true
 }
 
 pub fn exec_select(
@@ -76,78 +101,96 @@ pub fn exec_select(
         return Err(format!("Table {} not found", sql.table).into());
     };
 
-    if let Some(join) = &sql.join {
-        let Some(joined_table) = db.get(&join.table) else {
-            return Err(format!("Table {} not found", join.table).into());
-        };
+    if !sql.join.is_empty() {
+        let joined_tables = std::iter::once(Ok(table))
+            .chain(sql.join.iter().map(|join| {
+                db.get(&join.table)
+                    .ok_or_else(|| format!("Table {} not found", join.table))
+            }))
+            .collect::<Result<Vec<_>, String>>()?;
 
-        let (lhs, rhs) = match &join.condition {
-            Condition::Eq(Term::Column(lhs), Term::Column(rhs)) => (lhs, rhs),
-            Condition::Ne(Term::Column(lhs), Term::Column(rhs)) => (lhs, rhs),
-            _ => {
-                return Err(
-                    "JOIN's ON condition must have association between tables, not a literal"
-                        .into(),
-                );
-            }
-        };
+        let join_conditions = sql
+            .join
+            .iter()
+            .map(|join| {
+                let (lhs, rhs) = match &join.condition {
+                    Condition::Eq(Term::Column(lhs), Term::Column(rhs)) => (lhs, rhs),
+                    Condition::Ne(Term::Column(lhs), Term::Column(rhs)) => (lhs, rhs),
+                    _ => {
+                        return Err(
+                        "JOIN's ON condition must have association between tables, not a literal"
+                            .into(),
+                    );
+                    }
+                };
 
-        println!("table schema: {:?}", table.schema);
-        println!("joined table schema: {:?}", joined_table.schema);
+                let lhs_idx = find_col(&joined_tables, lhs)
+                    .ok_or_else(|| format!("Neither table has column {lhs} in join clause"))?;
+
+                let rhs_idx = find_col(&joined_tables, rhs)
+                    .ok_or_else(|| format!("Neither table has column {rhs} in join clause"))?;
+
+                Ok((lhs_idx, rhs_idx))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
 
         let cols = match &sql.cols {
-            Cols::Wildcard => table
-                .schema
+            Cols::Wildcard => joined_tables
                 .iter()
                 .enumerate()
-                .map(|(i, _)| ColRef::new(table, 0, i))
-                .chain(
-                    joined_table
+                .map(|(joindex, table)| {
+                    table
                         .schema
                         .iter()
                         .enumerate()
-                        .map(|(i, _)| ColRef::new(joined_table, 1, i)),
-                )
+                        .map(move |(i, _)| ColRef::new(table, joindex, i))
+                })
+                .flatten()
                 .collect(),
             Cols::List(cols) => cols
                 .iter()
                 .map(|col| {
-                    find_col(table, 0, col)
-                        .or_else(|| find_col(joined_table, 1, col))
+                    find_col(&joined_tables, col)
                         .ok_or_else(|| format!("Column \"{}\" not found", col))
                 })
                 .collect::<Result<Vec<_>, String>>()?,
         };
 
-        let lhs_idx = find_col(table, 0, lhs)
-            .or_else(|| find_col(joined_table, 1, lhs))
-            .ok_or_else(|| format!("Neither table has column {lhs} in join clause"))?;
+        let row_counts = joined_tables
+            .iter()
+            .map(|table| table.data.len() / table.schema.len())
+            .collect::<Vec<_>>();
+        let mut row_cursor = vec![0; joined_tables.len()];
 
-        let rhs_idx = find_col(table, 0, rhs)
-            .or_else(|| find_col(joined_table, 1, rhs))
-            .ok_or_else(|| format!("Neither table has column {rhs} in join clause"))?;
-
-        let count = table.data.len() / table.schema.len();
-        let joined_count = joined_table.data.len() / joined_table.schema.len();
-        for row in 0..count {
-            for joined_row in 0..joined_count {
-                let row_cursor = [row, joined_row];
-                let lhs_val = lhs_idx.get(&row_cursor);
-                let rhs_val = rhs_idx.get(&row_cursor);
-
-                if matches!(join.condition, Condition::Eq(_, _)) ^ (lhs_val == rhs_val) {
+        loop {
+            if sql
+                .join
+                .iter()
+                .zip(join_conditions.iter())
+                .any(|(join, (lhs, rhs))| {
+                    let lhs_val = lhs.get(&row_cursor);
+                    let rhs_val = rhs.get(&row_cursor);
+                    matches!(join.condition, Condition::Eq(_, _)) ^ (lhs_val == rhs_val)
+                })
+            {
+                if !incr_row_cursor(&mut row_cursor, &row_counts) {
+                    break;
+                } else {
                     continue;
                 }
-
-                for col in &cols {
-                    let cell = col.get(&row_cursor);
-                    if let Some(cell) = cell {
-                        write!(out, "{cell},")?;
-                    }
-                }
-                writeln!(out, "")?;
             }
-            continue;
+
+            for col in &cols {
+                let cell = col.get(&row_cursor);
+                if let Some(cell) = cell {
+                    write!(out, "{cell},")?;
+                }
+            }
+            writeln!(out, "")?;
+
+            if !incr_row_cursor(&mut row_cursor, &row_counts) {
+                break;
+            }
         }
 
         return Ok(());

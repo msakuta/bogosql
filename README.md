@@ -27,3 +27,19 @@ Result:
 1,Cave of Steel,Asimov,
 2,Moon's Harsh Mistress,Heinlein,
 ```
+
+Multiple joins:
+
+```
+"SELECT * FROM authors INNER JOIN books ON author_id = author INNER JOIN pages ON book = book_id"
+```
+
+Result:
+
+```
+1,Asimov,101,I, Robot,1,101,1,Title,
+1,Asimov,101,I, Robot,1,101,2,Preface,
+2,Heinlein,201,Moon's Harsh Mistress,2,201,1,Mistress,
+2,Heinlein,201,Moon's Harsh Mistress,2,201,2,is,
+2,Heinlein,201,Moon's Harsh Mistress,2,201,3,harsh,
+```
