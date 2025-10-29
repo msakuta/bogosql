@@ -10,7 +10,7 @@ use nom::{
 
 use crate::{
     Statement,
-    select::{Cols, Condition, JoinClause, Term},
+    select::{Cols, Column, Condition, JoinClause, Term},
 };
 
 pub(crate) fn token(i: &str) -> IResult<&str, &str> {
@@ -106,8 +106,8 @@ fn term(i: &str) -> IResult<&str, Term> {
         return Ok((r, Term::StrLiteral(lit)));
     }
 
-    if let Ok((r, id)) = ident(i) {
-        return Ok((r, Term::Column(id)));
+    if let Ok((r, col)) = column(i) {
+        return Ok((r, Term::Column(col)));
     }
 
     Err(nom::Err::Error(nom::error::Error::new(
@@ -145,17 +145,29 @@ fn columns_wildcard(i: &str) -> IResult<&str, Cols> {
 }
 
 fn columns(i: &str) -> IResult<&str, Cols> {
-    let (r, first) = ident(i)?;
+    let (r, first) = column(i)?;
     let (r, res) = fold_many0(
-        pair(delimited(multispace0, tag(","), multispace0), ident),
-        move || vec![first.to_string()],
+        pair(delimited(multispace0, tag(","), multispace0), column),
+        move || vec![first.clone()],
         |mut acc, (_, token)| {
-            acc.push(token.to_string());
+            acc.push(token);
             acc
         },
     )
     .parse(r)?;
     Ok((r, Cols::List(res)))
+}
+
+fn column(i: &str) -> IResult<&str, Column> {
+    let (r, table) = opt(pair(ident, delimited(multispace0, tag("."), multispace0))).parse(i)?;
+    let (r, column) = ident(r)?;
+    Ok((
+        r,
+        Column {
+            table: table.map(|(table, _)| table),
+            column,
+        },
+    ))
 }
 
 #[cfg(test)]

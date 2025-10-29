@@ -19,6 +19,7 @@ type Database = HashMap<String, Table>;
 
 #[derive(Debug)]
 struct Table {
+    name: String,
     schema: Vec<RowSchema>,
     data: Vec<String>,
 }
@@ -63,13 +64,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let Some(name) = path.file_stem() else {
                 continue;
             };
-            db.insert(name.to_string_lossy().to_string(), Table { schema, data });
+            let table_name = name.to_string_lossy().to_string();
+            db.insert(
+                table_name.clone(),
+                Table {
+                    name: table_name,
+                    schema,
+                    data,
+                },
+            );
         }
     }
 
     let src = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "SELECT id, data FROM main".to_string());
+        .unwrap_or_else(|| "SELECT id, data FROM phonebook".to_string());
 
     let (rest, stmt) = statement(&src).finish().unwrap();
 

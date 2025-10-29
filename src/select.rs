@@ -13,7 +13,7 @@ pub struct SelectStmt {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Cols {
     Wildcard,
-    List(Vec<String>),
+    List(Vec<Column>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,8 +30,24 @@ pub enum Condition {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Term {
-    Column(String),
+    Column(Column),
     StrLiteral(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Column {
+    pub table: Option<String>,
+    pub column: String,
+}
+
+impl std::fmt::Display for Column {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(ref table) = self.table {
+            write!(f, "{}.{}", table, self.column)
+        } else {
+            write!(f, "{}", self.column)
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -58,15 +74,38 @@ impl<'a> ColRef<'a> {
     }
 }
 
-fn find_col<'a>(tables: &[&'a Table], name: &str) -> Option<ColRef<'a>> {
-    tables.iter().enumerate().find_map(|(joindex, table)| {
-        table
+fn find_col<'a>(tables: &[&'a Table], column: &Column) -> Option<ColRef<'a>> {
+    if let Some(ref table_name) = column.table {
+        let (joindex, table) = tables
+            .iter()
+            .enumerate()
+            .find(|(_, t)| t.name == *table_name)?;
+        return table
             .schema
             .iter()
             .enumerate()
-            .find(|(_, s)| s.name == name)
-            .map(|(i, _)| ColRef::new(table, joindex, i))
-    })
+            .find(|(_, s)| s.name == column.column)
+            .map(|(i, _)| ColRef::new(table, joindex, i));
+    }
+    tables
+        .iter()
+        .enumerate()
+        .fold(None, |mut acc, (joindex, table)| {
+            let candidate = table
+                .schema
+                .iter()
+                .enumerate()
+                .find(|(_, s)| s.name == column.column)
+                .map(|(i, _)| ColRef::new(table, joindex, i));
+            if candidate.is_some() {
+                if acc.is_some() {
+                    panic!("Column name {}", column.column);
+                } else {
+                    acc = candidate;
+                }
+            }
+            acc
+        })
 }
 
 /// Increment the row cursor, similar to the add arithmetics.
@@ -205,7 +244,7 @@ pub fn exec_select(
                     .schema
                     .iter()
                     .enumerate()
-                    .find(|(_, s)| s.name == *col)
+                    .find(|(_, s)| s.name == col.column)
                     .map(|(i, _)| i)
                     .ok_or_else(|| format!("Column \"{}\" not found", col))
             })
@@ -223,7 +262,7 @@ pub fn exec_select(
                         .schema
                         .iter()
                         .enumerate()
-                        .find(|(_, c)| c.name == *lhs)
+                        .find(|(_, c)| c.name == lhs.column)
                         .ok_or_else(|| format!("Column \"{}\" not found", lhs))?
                         .0;
                     let lhs_val = table
@@ -240,7 +279,7 @@ pub fn exec_select(
                         .schema
                         .iter()
                         .enumerate()
-                        .find(|(_, c)| c.name == *rhs)
+                        .find(|(_, c)| c.name == rhs.column)
                         .ok_or_else(|| format!("Column \"{}\" not found", rhs))?
                         .0;
                     let rhs_val = table
