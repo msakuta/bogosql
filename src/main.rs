@@ -1,3 +1,4 @@
+mod csv;
 mod parser;
 mod select;
 
@@ -44,20 +45,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             && let Ok(t) = f.file_type()
             && t.is_file()
         {
-            let mut csv = csv::Reader::from_path(f.path())?;
+            let str = std::fs::read_to_string(f.path())?;
+            let csv = crate::csv::parse_csv(&str)?;
             let schema = csv
-                .headers()?
+                .first()
+                .ok_or_else(|| "CSV needs at least 1 line for the header".to_string())?
                 .iter()
                 .map(|r| RowSchema {
                     name: r.trim().to_string(),
                 })
                 .collect::<Vec<_>>();
             let mut data = vec![];
-            for record in csv.records() {
-                if let Ok(r) = record {
-                    for cell in r.iter() {
-                        data.push(cell.trim().to_string());
-                    }
+            for record in &csv[1..] {
+                if record.len() == 0 {
+                    continue;
+                }
+                if record.len() != schema.len() {
+                    return Err(format!(
+                        "error processing file {file:?}: CSV needs the same number of columns as the header",
+                        file = f.path().to_str()
+                    )
+                    .into());
+                }
+                for cell in record {
+                    data.push(cell.trim().to_string());
                 }
             }
             let path = f.path();
