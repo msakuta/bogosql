@@ -59,7 +59,7 @@ Increasingly difficult TODOs
   * [ ] `IS NULL` / `IS NOT NULL`
 * [x] INNER JOIN
 * [x] LEFT JOIN
-* [ ] Aliases (`AS`)
+* [x] Aliases (`AS`)
 * [ ] Ordering (`ORDER BY col`)
 * [ ] LIMIT, OFFSET
 * [ ] DISTINCT

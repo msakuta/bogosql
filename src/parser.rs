@@ -10,7 +10,7 @@ use nom::{
 
 use crate::{
     Statement,
-    select::{BinOp, Cols, Column, Expr, JoinClause, JoinKind, UniOp},
+    select::{BinOp, Cols, Column, Expr, JoinClause, JoinKind, TableSpecifier, UniOp},
 };
 
 pub(crate) fn token(i: &str) -> IResult<&str, &str> {
@@ -58,12 +58,27 @@ pub fn statement(i: &str) -> IResult<&str, Statement> {
     Ok((r, stmt))
 }
 
-fn from_table(i: &str) -> IResult<&str, String> {
+fn from_table(i: &str) -> IResult<&str, TableSpecifier> {
     let (r, _) = delimited(multispace0, tag_no_case("FROM"), multispace0).parse(i)?;
+    table_specifier(r)
+}
 
+fn table_specifier(r: &str) -> IResult<&str, TableSpecifier> {
     let (r, table) = token(r)?;
 
-    Ok((r, table.to_string()))
+    let (r, alias) = opt(pair(
+        delimited(multispace0, tag_no_case("AS"), multispace1),
+        token,
+    ))
+    .parse(r)?;
+
+    Ok((
+        r,
+        TableSpecifier {
+            name: table.to_string(),
+            alias: alias.map(|(_, name)| name.to_string()),
+        },
+    ))
 }
 
 fn join(i: &str) -> IResult<&str, JoinClause> {
@@ -76,7 +91,7 @@ fn join(i: &str) -> IResult<&str, JoinClause> {
 
     let (r, _) = delimited(multispace0, tag_no_case("JOIN"), multispace0).parse(r)?;
 
-    let (r, table) = ident(r)?;
+    let (r, table) = table_specifier(r)?;
 
     let (r, _) = delimited(multispace0, tag_no_case("ON"), multispace0).parse(r)?;
 
@@ -284,7 +299,23 @@ fn column(i: &str) -> IResult<&str, Column> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{SelectStmt, Statement};
+    use crate::{SelectStmt, Statement, select::TableSpecifier};
+
+    impl TableSpecifier {
+        pub fn new(name: impl Into<String>) -> Self {
+            Self {
+                name: name.into(),
+                alias: None,
+            }
+        }
+
+        pub fn new_with_alias(name: impl Into<String>, alias: impl Into<String>) -> Self {
+            Self {
+                name: name.into(),
+                alias: Some(alias.into()),
+            }
+        }
+    }
 
     #[test]
     fn test_select() {
@@ -294,7 +325,21 @@ mod test {
             statement(src).unwrap().1,
             Statement::Select(SelectStmt {
                 cols: Cols::List(vec![Column::new("id"), Column::new("data")]),
-                table: "table".to_string(),
+                table: TableSpecifier::new("table"),
+                join: vec![],
+                condition: None,
+            })
+        );
+    }
+
+    #[test]
+    fn test_alias() {
+        let src = "SELECT * FROM table AS t";
+        assert_eq!(
+            statement(src).unwrap().1,
+            Statement::Select(SelectStmt {
+                cols: Cols::Wildcard,
+                table: TableSpecifier::new_with_alias("table", "t"),
                 join: vec![],
                 condition: None,
             })
@@ -309,9 +354,9 @@ mod test {
             statement(src).unwrap().1,
             Statement::Select(SelectStmt {
                 cols: Cols::List(vec![Column::new("id"), Column::new("data")]),
-                table: "table".to_string(),
+                table: TableSpecifier::new("table"),
                 join: vec![JoinClause {
-                    table: "table2".to_string(),
+                    table: TableSpecifier::new("table2"),
                     kind: JoinKind::Inner,
                     condition: Expr::Binary {
                         op: BinOp::Eq,

@@ -1,16 +1,22 @@
-use std::{error::Error, io::Write};
+use std::{collections::HashMap, error::Error, io::Write};
 
 use crate::{
     Database, Table,
-    eval::{EvalError, coerce_bool, eval_expr},
+    eval::{EvalError, eval_expr},
 };
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectStmt {
     pub cols: Cols,
-    pub table: String,
+    pub table: TableSpecifier,
     pub join: Vec<JoinClause>,
     pub condition: Option<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableSpecifier {
+    pub name: String,
+    pub alias: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -19,10 +25,10 @@ pub enum Cols {
     List(Vec<Column>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct JoinClause {
     pub kind: JoinKind,
-    pub table: String,
+    pub table: TableSpecifier,
     pub condition: Expr,
 }
 
@@ -115,12 +121,24 @@ impl<'a> ColRef<'a> {
     }
 }
 
-fn find_col<'a>(tables: &[&'a Table], column: &Column) -> Option<ColRef<'a>> {
+struct QueryContext<'a> {
+    tables: Vec<&'a Table>,
+    aliases: HashMap<&'a String, usize>,
+}
+
+fn find_col<'a>(ctx: &QueryContext<'a>, column: &Column) -> Option<ColRef<'a>> {
     if let Some(ref table_name) = column.table {
-        let (joindex, table) = tables
-            .iter()
-            .enumerate()
-            .find(|(_, t)| t.name == *table_name)?;
+        let (joindex, table) = ctx
+            .aliases
+            .get(table_name)
+            .and_then(|i| Some((*i, *ctx.tables.get(*i)?)))
+            .or_else(|| {
+                ctx.tables
+                    .iter()
+                    .enumerate()
+                    .find(|(_, t)| t.name == *table_name)
+                    .map(|(i, t)| (i, *t))
+            })?;
         return table
             .schema
             .iter()
@@ -128,7 +146,7 @@ fn find_col<'a>(tables: &[&'a Table], column: &Column) -> Option<ColRef<'a>> {
             .find(|(_, s)| s.name == column.column)
             .map(|(i, _)| ColRef::new(table, joindex, i));
     }
-    tables
+    ctx.tables
         .iter()
         .enumerate()
         .fold(None, |mut acc, (joindex, table)| {
@@ -200,126 +218,95 @@ pub fn exec_select(
     db: &Database,
     sql: &SelectStmt,
 ) -> Result<(), Box<dyn Error>> {
-    let Some(table) = db.get(&sql.table) else {
-        return Err(format!("Table {} not found", sql.table).into());
+    let Some(table) = db.get(&sql.table.name) else {
+        return Err(format!("Table {} not found", sql.table.name).into());
     };
 
-    if !sql.join.is_empty() {
-        let joined_tables = std::iter::once(Ok(table))
-            .chain(sql.join.iter().map(|join| {
-                db.get(&join.table)
-                    .ok_or_else(|| format!("Table {} not found", join.table))
-            }))
-            .collect::<Result<Vec<_>, String>>()?;
-
-        let join_allow_none = std::iter::once(false)
-            .chain(
-                sql.join
-                    .iter()
-                    .map(|join| matches!(join.kind, JoinKind::Left)),
-            )
-            .collect::<Vec<_>>();
-
-        let cols = match &sql.cols {
-            Cols::Wildcard => joined_tables
-                .iter()
-                .enumerate()
-                .map(|(table_idx, table)| {
-                    table
-                        .schema
-                        .iter()
-                        .enumerate()
-                        .map(move |(i, _)| ColRef::new(table, table_idx, i))
-                })
-                .flatten()
-                .collect(),
-            Cols::List(cols) => cols
-                .iter()
-                .map(|col| {
-                    find_col(&joined_tables, col)
-                        .ok_or_else(|| format!("Column \"{}\" not found", col))
-                })
-                .collect::<Result<Vec<_>, String>>()?,
-        };
-
-        let row_counts = joined_tables
-            .iter()
-            .map(|table| table.data.len() / table.schema.len())
-            .collect::<Vec<_>>();
-        let mut row_cursor = vec![RowCursor::new(); joined_tables.len()];
-
-        loop {
-            if sql.join.iter().all(|join| {
-                let val = eval_expr(&join.condition, &joined_tables, &row_cursor);
-                match val {
-                    Ok(val) => val == "1" || val.eq_ignore_ascii_case("true"),
-                    Err(EvalError::CursorNone(table_idx)) => {
-                        join_allow_none[table_idx] && !row_cursor[table_idx].shown
-                    }
-                    _ => false,
-                }
-            }) && row_cursor.iter().any(|row| row.row.is_some())
-            {
-                for rc in row_cursor.iter_mut() {
-                    rc.shown = true;
-                }
-                for col in &cols {
-                    let cell = col.get(&row_cursor);
-                    if let Some(cell) = cell {
-                        write!(out, "{cell},")?;
-                    } else {
-                        write!(out, ",")?;
-                    }
-                }
-                writeln!(out, "")?;
-            }
-
-            if !incr_row_cursor(&mut row_cursor, &row_counts) {
-                break;
-            }
-        }
-
-        return Ok(());
+    let mut aliases = HashMap::new();
+    if let Some(ref alias) = sql.table.alias {
+        aliases.insert(alias, 0);
     }
 
+    let joined_tables = std::iter::once(Ok(table))
+        .chain(sql.join.iter().enumerate().map(|(i, join)| {
+            if let Some(ref alias) = join.table.alias {
+                aliases.insert(alias, i);
+            }
+            db.get(&join.table.name)
+                .ok_or_else(|| format!("Table {} not found", join.table.name))
+        }))
+        .collect::<Result<Vec<_>, String>>()?;
+
+    let ctx = QueryContext {
+        tables: joined_tables,
+        aliases,
+    };
+
+    let join_allow_none = std::iter::once(false)
+        .chain(
+            sql.join
+                .iter()
+                .map(|join| matches!(join.kind, JoinKind::Left)),
+        )
+        .collect::<Vec<_>>();
+
     let cols = match &sql.cols {
-        Cols::Wildcard => table.schema.iter().enumerate().map(|(i, _)| i).collect(),
-        Cols::List(cols) => cols
+        Cols::Wildcard => ctx
+            .tables
             .iter()
-            .map(|col| {
+            .enumerate()
+            .map(|(table_idx, table)| {
                 table
                     .schema
                     .iter()
                     .enumerate()
-                    .find(|(_, s)| s.name == col.column)
-                    .map(|(i, _)| i)
-                    .ok_or_else(|| format!("Column \"{}\" not found", col))
+                    .map(move |(i, _)| ColRef::new(table, table_idx, i))
             })
+            .flatten()
+            .collect(),
+        Cols::List(cols) => cols
+            .iter()
+            .map(|col| find_col(&ctx, col).ok_or_else(|| format!("Column \"{}\" not found", col)))
             .collect::<Result<Vec<_>, String>>()?,
     };
 
-    let count = table.data.len() / table.schema.len();
-    let stride = table.schema.len();
-    for row in 0..count {
-        if let Some(cond) = &sql.condition {
-            let val = eval_expr(
-                cond,
-                &[table],
-                &[RowCursor {
-                    row: Some(row),
-                    shown: false,
-                }],
-            )?;
-            if !coerce_bool(&val) {
-                continue;
+    let row_counts = ctx
+        .tables
+        .iter()
+        .map(|table| table.data.len() / table.schema.len())
+        .collect::<Vec<_>>();
+    let mut row_cursor = vec![RowCursor::new(); ctx.tables.len()];
+
+    loop {
+        if sql.join.iter().all(|join| {
+            let val = eval_expr(&join.condition, &ctx.tables, &row_cursor);
+            match val {
+                Ok(val) => val == "1" || val.eq_ignore_ascii_case("true"),
+                Err(EvalError::CursorNone(table_idx)) => {
+                    join_allow_none[table_idx] && !row_cursor[table_idx].shown
+                }
+                _ => false,
             }
-        }
-        for col in &cols {
-            if let Some(cell) = table.data.get(col + row * stride) {
-                write!(out, "{cell},")?;
+        }) && row_cursor.iter().any(|row| row.row.is_some())
+        {
+            for rc in row_cursor.iter_mut() {
+                rc.shown = true;
             }
+            for col in &cols {
+                let cell = col.get(&row_cursor);
+                if let Some(cell) = cell {
+                    write!(out, "{cell},")?;
+                } else {
+                    write!(out, ",")?;
+                }
+            }
+            writeln!(out, "")?;
         }
-        writeln!(out, "")?;
+
+        if !incr_row_cursor(&mut row_cursor, &row_counts) {
+            break;
+        }
     }
+
     Ok(())
 }
