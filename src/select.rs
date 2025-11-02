@@ -1,13 +1,16 @@
 use std::{error::Error, io::Write};
 
-use crate::{Database, Table};
+use crate::{
+    Database, Table,
+    eval::{EvalError, eval_expr},
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectStmt {
     pub cols: Cols,
     pub table: String,
     pub join: Vec<JoinClause>,
-    pub condition: Option<Condition>,
+    pub condition: Option<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -20,7 +23,7 @@ pub enum Cols {
 pub struct JoinClause {
     pub kind: JoinKind,
     pub table: String,
-    pub condition: Condition,
+    pub condition: Expr,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,15 +33,20 @@ pub enum JoinKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Condition {
-    Eq(Term, Term),
-    Ne(Term, Term),
+pub enum Op {
+    Eq,
+    Ne,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Term {
+pub enum Expr {
     Column(Column),
     StrLiteral(String),
+    Binary {
+        op: Op,
+        lhs: Box<Expr>,
+        rhs: Box<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,9 +135,9 @@ fn find_col<'a>(tables: &[&'a Table], column: &Column) -> Option<ColRef<'a>> {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct RowCursor {
-    row: Option<usize>,
-    shown: bool,
+pub(crate) struct RowCursor {
+    pub row: Option<usize>,
+    pub shown: bool,
 }
 
 impl RowCursor {
@@ -197,31 +205,6 @@ pub fn exec_select(
             )
             .collect::<Vec<_>>();
 
-        let join_conditions = sql
-            .join
-            .iter()
-            .map(|join| {
-                let (lhs, rhs) = match &join.condition {
-                    Condition::Eq(Term::Column(lhs), Term::Column(rhs)) => (lhs, rhs),
-                    Condition::Ne(Term::Column(lhs), Term::Column(rhs)) => (lhs, rhs),
-                    _ => {
-                        return Err(
-                        "JOIN's ON condition must have association between tables, not a literal"
-                            .into(),
-                    );
-                    }
-                };
-
-                let lhs_idx = find_col(&joined_tables, lhs)
-                    .ok_or_else(|| format!("Neither table has column {lhs} in join clause"))?;
-
-                let rhs_idx = find_col(&joined_tables, rhs)
-                    .ok_or_else(|| format!("Neither table has column {rhs} in join clause"))?;
-
-                Ok((lhs_idx, rhs_idx))
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-
         let cols = match &sql.cols {
             Cols::Wildcard => joined_tables
                 .iter()
@@ -251,30 +234,16 @@ pub fn exec_select(
         let mut row_cursor = vec![RowCursor::new(); joined_tables.len()];
 
         loop {
-            if sql
-                .join
-                .iter()
-                .zip(join_conditions.iter())
-                .all(|(join, (lhs, rhs))| {
-                    let Some(lhs_val) = lhs.get(&row_cursor) else {
-                        return join_allow_none[lhs.joindex] && !row_cursor[lhs.joindex].shown;
-                    };
-                    let Some(rhs_val) = rhs.get(&row_cursor) else {
-                        return join_allow_none[lhs.joindex] && !row_cursor[rhs.joindex].shown;
-                    };
-                    // println!(
-                    //     "{row_cursor:?}: {}.{}={lhs_val} {}.{}={rhs_val}, is_condition: {}, eq: {}, res: {}",
-                    //     lhs.table.name,
-                    //     lhs.table.schema[lhs.col].name,
-                    //     rhs.table.name,
-                    //     rhs.table.schema[rhs.col].name,
-                    //     !matches!(join.condition, Condition::Eq(_, _)),
-                    //     (lhs_val == rhs_val),
-                    //     !matches!(join.condition, Condition::Eq(_, _)) ^ (lhs_val == rhs_val)
-                    // );
-                    !matches!(join.condition, Condition::Eq(_, _)) ^ (lhs_val == rhs_val)
-                })
-                && row_cursor.iter().any(|row| row.row.is_some())
+            if sql.join.iter().all(|join| {
+                let val = eval_expr(&join.condition, &joined_tables, &row_cursor);
+                match val {
+                    Ok(val) => val == "1" || val.eq_ignore_ascii_case("true"),
+                    Err(EvalError::CursorNone(table_idx)) => {
+                        join_allow_none[table_idx] && !row_cursor[table_idx].shown
+                    }
+                    _ => false,
+                }
+            }) && row_cursor.iter().any(|row| row.row.is_some())
             {
                 for rc in row_cursor.iter_mut() {
                     rc.shown = true;
@@ -318,46 +287,16 @@ pub fn exec_select(
     let stride = table.schema.len();
     for row in 0..count {
         if let Some(cond) = &sql.condition {
-            match cond {
-                Condition::Eq(Term::Column(lhs), Term::StrLiteral(rhs))
-                | Condition::Ne(Term::Column(lhs), Term::StrLiteral(rhs)) => {
-                    let lhs_idx = table
-                        .schema
-                        .iter()
-                        .enumerate()
-                        .find(|(_, c)| c.name == lhs.column)
-                        .ok_or_else(|| format!("Column \"{}\" not found", lhs))?
-                        .0;
-                    let lhs_val = table
-                        .data
-                        .get(lhs_idx + row * stride)
-                        .ok_or_else(|| "Column index not found")?;
-                    if !matches!(cond, Condition::Eq(_, _)) ^ (lhs_val != rhs) {
-                        continue;
-                    }
-                }
-                Condition::Eq(Term::StrLiteral(lhs), Term::Column(rhs))
-                | Condition::Ne(Term::StrLiteral(lhs), Term::Column(rhs)) => {
-                    let rhs_idx = table
-                        .schema
-                        .iter()
-                        .enumerate()
-                        .find(|(_, c)| c.name == rhs.column)
-                        .ok_or_else(|| format!("Column \"{}\" not found", rhs))?
-                        .0;
-                    let rhs_val = table
-                        .data
-                        .get(rhs_idx + row * stride)
-                        .ok_or_else(|| "Column index not found")?;
-                    if !matches!(cond, Condition::Eq(_, _)) ^ (lhs != rhs_val) {
-                        continue;
-                    }
-                }
-                _ => {
-                    return Err(
-                        "Where clause can only be column = 'literal' or 'literal' = column".into(),
-                    );
-                }
+            let val = eval_expr(
+                cond,
+                &[table],
+                &[RowCursor {
+                    row: Some(row),
+                    shown: false,
+                }],
+            )?;
+            if val != "1" && !val.eq_ignore_ascii_case("true") {
+                continue;
             }
         }
         for col in &cols {

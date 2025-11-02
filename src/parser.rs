@@ -10,7 +10,7 @@ use nom::{
 
 use crate::{
     Statement,
-    select::{Cols, Column, Condition, JoinClause, JoinKind, Term},
+    select::{Cols, Column, Expr, JoinClause, JoinKind, Op},
 };
 
 pub(crate) fn token(i: &str) -> IResult<&str, &str> {
@@ -80,7 +80,7 @@ fn join(i: &str) -> IResult<&str, JoinClause> {
 
     let (r, _) = delimited(multispace0, tag_no_case("ON"), multispace0).parse(r)?;
 
-    let (r, condition) = conditional(r)?;
+    let (r, condition) = expression(r)?;
 
     Ok((
         r,
@@ -96,36 +96,44 @@ fn join(i: &str) -> IResult<&str, JoinClause> {
     ))
 }
 
-fn where_clause(i: &str) -> IResult<&str, Condition> {
+fn where_clause(i: &str) -> IResult<&str, Expr> {
     let (r, _) = delimited(multispace0, tag_no_case("WHERE"), multispace0).parse(i)?;
 
-    conditional(r)
+    expression(r)
 }
 
-fn conditional(i: &str) -> IResult<&str, Condition> {
+fn expression(i: &str) -> IResult<&str, Expr> {
+    alt((binary_ex, term)).parse(i)
+}
+
+fn binary_ex(i: &str) -> IResult<&str, Expr> {
     let (r, lhs) = term(i)?;
 
     let (r, op) = delimited(multispace0, alt((tag("="), tag("<>"))), multispace0).parse(r)?;
 
-    let (r, rhs) = term(r)?;
+    let (r, rhs) = expression(r)?;
 
     Ok((
         r,
-        match op {
-            "=" => Condition::Eq(lhs, rhs),
-            "<>" => Condition::Ne(lhs, rhs),
-            _ => unreachable!(),
+        Expr::Binary {
+            op: match op {
+                "=" => Op::Eq,
+                "<>" => Op::Ne,
+                _ => unreachable!(),
+            },
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
         },
     ))
 }
 
-fn term(i: &str) -> IResult<&str, Term> {
+fn term(i: &str) -> IResult<&str, Expr> {
     if let Ok((r, lit)) = str_literal(i) {
-        return Ok((r, Term::StrLiteral(lit)));
+        return Ok((r, Expr::StrLiteral(lit)));
     }
 
     if let Ok((r, col)) = column(i) {
-        return Ok((r, Term::Column(col)));
+        return Ok((r, Expr::Column(col)));
     }
 
     Err(nom::Err::Error(nom::error::Error::new(
@@ -220,10 +228,11 @@ mod test {
                 join: vec![JoinClause {
                     table: "table2".to_string(),
                     kind: JoinKind::Inner,
-                    condition: Condition::Eq(
-                        Term::Column(Column::new("id")),
-                        Term::Column(Column::new("id2"))
-                    ),
+                    condition: Expr::Binary {
+                        op: Op::Eq,
+                        lhs: Box::new(Expr::Column(Column::new("id"))),
+                        rhs: Box::new(Expr::Column(Column::new("id2")))
+                    },
                 }],
                 condition: None,
             })

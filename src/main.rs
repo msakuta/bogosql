@@ -1,4 +1,5 @@
 mod csv;
+mod eval;
 mod parser;
 mod select;
 
