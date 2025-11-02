@@ -85,6 +85,10 @@ pub(crate) fn eval_expr(
             let res = match op {
                 Op::Eq => lhs == rhs,
                 Op::Ne => lhs != rhs,
+                Op::Lt => lhs < rhs,
+                Op::Gt => lhs > rhs,
+                Op::Le => lhs <= rhs,
+                Op::Ge => lhs >= rhs,
             };
             Ok((if res { "1" } else { "0" }).to_string())
         }

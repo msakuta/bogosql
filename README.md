@@ -51,7 +51,7 @@ Increasingly difficult TODOs
 * [x] SELECT
 * [x] WHERE a = b
 * [x] WHERE a <> b
-  * [ ] Comparison operators (`<`, `>`, `<=`, `>=`)
+  * [x] Comparison operators (`<`, `>`, `<=`, `>=`)
   * [ ] Logical operators (`AND`, `OR`, `NOT`)
   * [ ] Group operators (`IN`, `NOT IN`)
   * [ ] `BETWEEN` / `NOT BETWEEN`

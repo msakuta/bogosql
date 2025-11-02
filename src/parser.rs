@@ -109,7 +109,20 @@ fn expression(i: &str) -> IResult<&str, Expr> {
 fn binary_ex(i: &str) -> IResult<&str, Expr> {
     let (r, lhs) = term(i)?;
 
-    let (r, op) = delimited(multispace0, alt((tag("="), tag("<>"))), multispace0).parse(r)?;
+    let (r, op) = delimited(
+        multispace0,
+        alt((
+            // The order matters!
+            tag("<="),
+            tag(">="),
+            tag("<>"),
+            tag("="),
+            tag("<"),
+            tag(">"),
+        )),
+        multispace0,
+    )
+    .parse(r)?;
 
     let (r, rhs) = expression(r)?;
 
@@ -119,6 +132,10 @@ fn binary_ex(i: &str) -> IResult<&str, Expr> {
             op: match op {
                 "=" => Op::Eq,
                 "<>" => Op::Ne,
+                "<" => Op::Lt,
+                ">" => Op::Gt,
+                "<=" => Op::Le,
+                ">=" => Op::Ge,
                 _ => unreachable!(),
             },
             lhs: Box::new(lhs),

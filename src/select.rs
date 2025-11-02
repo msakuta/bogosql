@@ -36,6 +36,10 @@ pub enum JoinKind {
 pub enum Op {
     Eq,
     Ne,
+    Lt,
+    Gt,
+    Le,
+    Ge,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
