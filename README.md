@@ -43,3 +43,35 @@ Result:
 2,Heinlein,201,Moon's Harsh Mistress,2,201,2,is,
 2,Heinlein,201,Moon's Harsh Mistress,2,201,3,harsh,
 ```
+
+## Features
+
+Increasingly difficult TODOs
+
+* [x] SELECT
+* [x] WHERE a = b
+* [x] WHERE a <> b
+  * [ ] Comparison operators (`<`, `>`, `<=`, `>=`)
+  * [ ] Logical operators (`AND`, `OR`, `NOT`)
+  * [ ] Group operators (`IN`, `NOT IN`)
+  * [ ] `BETWEEN` / `NOT BETWEEN`
+  * [ ] `LIKE` / `NOT LIKE`
+  * [ ] `IS NULL` / `IS NOT NULL`
+* [x] INNER JOIN
+* [x] LEFT JOIN
+* [ ] Aliases (`AS`)
+* [ ] Ordering (`ORDER BY col`)
+* [ ] LIMIT, OFFSET
+* [ ] DISTINCT
+* [ ] Expressions
+  * [ ] Arithmetic: `+`, `-`, `*`, `/`
+  * [ ] Parentheses for precedence: `(a + b) * c`
+  * [ ] Scalar function calls (`LENGTH`, `UPPER`, `LOWER`)
+* [ ] Aggregation and grouping
+  * [ ] Aggregate function calls (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`)
+  * [ ] `HAVING`
+* [ ] RIGHT JOIN
+* [ ] CROSS JOIN
+* [ ] Subqueries
+* [ ] Set operators (`UNION`, `UNION ALL`, `INTERSECT`, `EXCEPT`, `MINUS`)
+* [ ] DML
