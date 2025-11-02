@@ -89,8 +89,14 @@ pub(crate) fn eval_expr(
                 Op::Gt => lhs > rhs,
                 Op::Le => lhs <= rhs,
                 Op::Ge => lhs >= rhs,
+                Op::And => coerce_bool(&lhs) && coerce_bool(&rhs),
+                Op::Or => coerce_bool(&lhs) || coerce_bool(&rhs),
             };
             Ok((if res { "1" } else { "0" }).to_string())
         }
     }
+}
+
+pub(crate) fn coerce_bool(val: &str) -> bool {
+    val == "1" || val.eq_ignore_ascii_case("true")
 }

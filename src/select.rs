@@ -2,7 +2,7 @@ use std::{error::Error, io::Write};
 
 use crate::{
     Database, Table,
-    eval::{EvalError, eval_expr},
+    eval::{EvalError, coerce_bool, eval_expr},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -40,6 +40,8 @@ pub enum Op {
     Gt,
     Le,
     Ge,
+    And,
+    Or,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -299,7 +301,7 @@ pub fn exec_select(
                     shown: false,
                 }],
             )?;
-            if val != "1" && !val.eq_ignore_ascii_case("true") {
+            if !coerce_bool(&val) {
                 continue;
             }
         }

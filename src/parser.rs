@@ -103,10 +103,38 @@ fn where_clause(i: &str) -> IResult<&str, Expr> {
 }
 
 fn expression(i: &str) -> IResult<&str, Expr> {
-    alt((binary_ex, term)).parse(i)
+    alt((logical_ex, comparison_ex, term)).parse(i)
 }
 
-fn binary_ex(i: &str) -> IResult<&str, Expr> {
+fn logical_ex(i: &str) -> IResult<&str, Expr> {
+    let (r, lhs) = comparison_ex(i)?;
+
+    let (r, res) = fold_many0(
+        pair(
+            delimited(
+                multispace0,
+                alt((tag_no_case("AND"), tag_no_case("OR"))),
+                multispace0,
+            ),
+            comparison_ex,
+        ),
+        move || lhs.clone(),
+        |acc, (op, sub_ex)| Expr::Binary {
+            op: if op.eq_ignore_ascii_case("AND") {
+                Op::And
+            } else {
+                Op::Or
+            },
+            lhs: Box::new(acc),
+            rhs: Box::new(sub_ex),
+        },
+    )
+    .parse(r)?;
+
+    Ok((r, res))
+}
+
+fn comparison_ex(i: &str) -> IResult<&str, Expr> {
     let (r, lhs) = term(i)?;
 
     let (r, op) = delimited(
