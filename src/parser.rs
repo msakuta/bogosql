@@ -2,7 +2,7 @@ use nom::{
     IResult, Parser,
     branch::alt,
     bytes::complete::{tag, tag_no_case},
-    character::complete::{alpha1, alphanumeric1, multispace0, none_of},
+    character::complete::{alpha1, alphanumeric1, multispace0, multispace1, none_of},
     combinator::{opt, recognize},
     multi::{fold_many0, many0},
     sequence::{delimited, pair},
@@ -10,7 +10,7 @@ use nom::{
 
 use crate::{
     Statement,
-    select::{Cols, Column, Condition, JoinClause, Term},
+    select::{Cols, Column, Condition, JoinClause, JoinKind, Term},
 };
 
 pub(crate) fn token(i: &str) -> IResult<&str, &str> {
@@ -67,7 +67,14 @@ fn from_table(i: &str) -> IResult<&str, String> {
 }
 
 fn join(i: &str) -> IResult<&str, JoinClause> {
-    let (r, _) = delimited(multispace0, tag_no_case("INNER JOIN"), multispace0).parse(i)?;
+    let (r, kind) = delimited(
+        multispace0,
+        alt((tag_no_case("INNER"), tag_no_case("LEFT"))),
+        multispace1,
+    )
+    .parse(i)?;
+
+    let (r, _) = delimited(multispace0, tag_no_case("JOIN"), multispace0).parse(r)?;
 
     let (r, table) = ident(r)?;
 
@@ -75,7 +82,18 @@ fn join(i: &str) -> IResult<&str, JoinClause> {
 
     let (r, condition) = conditional(r)?;
 
-    Ok((r, JoinClause { table, condition }))
+    Ok((
+        r,
+        JoinClause {
+            kind: if kind.eq_ignore_ascii_case("INNER") {
+                JoinKind::Inner
+            } else {
+                JoinKind::Left
+            },
+            table,
+            condition,
+        },
+    ))
 }
 
 fn where_clause(i: &str) -> IResult<&str, Condition> {
@@ -182,7 +200,7 @@ mod test {
         assert_eq!(
             statement(src).unwrap().1,
             Statement::Select(SelectStmt {
-                cols: Cols::List(vec!["id".to_string(), "data".to_string()]),
+                cols: Cols::List(vec![Column::new("id"), Column::new("data")]),
                 table: "table".to_string(),
                 join: vec![],
                 condition: None,
@@ -197,13 +215,14 @@ mod test {
         assert_eq!(
             statement(src).unwrap().1,
             Statement::Select(SelectStmt {
-                cols: Cols::List(vec!["id".to_string(), "data".to_string()]),
+                cols: Cols::List(vec![Column::new("id"), Column::new("data")]),
                 table: "table".to_string(),
                 join: vec![JoinClause {
                     table: "table2".to_string(),
+                    kind: JoinKind::Inner,
                     condition: Condition::Eq(
-                        Term::Column("id".to_string()),
-                        Term::Column("id2".to_string())
+                        Term::Column(Column::new("id")),
+                        Term::Column(Column::new("id2"))
                     ),
                 }],
                 condition: None,
