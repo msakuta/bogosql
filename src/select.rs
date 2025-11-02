@@ -33,7 +33,7 @@ pub enum JoinKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Op {
+pub enum BinOp {
     Eq,
     Ne,
     Lt,
@@ -45,13 +45,22 @@ pub enum Op {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UniOp {
+    Not,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
     Column(Column),
     StrLiteral(String),
     Binary {
-        op: Op,
+        op: BinOp,
         lhs: Box<Expr>,
         rhs: Box<Expr>,
+    },
+    Unary {
+        op: UniOp,
+        operand: Box<Expr>,
     },
 }
 

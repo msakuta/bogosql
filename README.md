@@ -52,7 +52,7 @@ Increasingly difficult TODOs
 * [x] WHERE a = b
 * [x] WHERE a <> b
   * [x] Comparison operators (`<`, `>`, `<=`, `>=`)
-  * [ ] Logical operators (`AND`, `OR`, `NOT`)
+  * [x] Logical operators (`AND`, `OR`, `NOT`)
   * [ ] Group operators (`IN`, `NOT IN`)
   * [ ] `BETWEEN` / `NOT BETWEEN`
   * [ ] `LIKE` / `NOT LIKE`
@@ -65,7 +65,7 @@ Increasingly difficult TODOs
 * [ ] DISTINCT
 * [ ] Expressions
   * [ ] Arithmetic: `+`, `-`, `*`, `/`
-  * [ ] Parentheses for precedence: `(a + b) * c`
+  * [x] Parentheses for precedence: `(a + b) * c`
   * [ ] Scalar function calls (`LENGTH`, `UPPER`, `LOWER`)
 * [ ] Aggregation and grouping
   * [ ] Aggregate function calls (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`)

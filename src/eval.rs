@@ -1,6 +1,6 @@
 use crate::{
     Table,
-    select::{Expr, Op, RowCursor},
+    select::{BinOp, Expr, RowCursor, UniOp},
 };
 
 #[derive(Clone, Debug)]
@@ -83,14 +83,21 @@ pub(crate) fn eval_expr(
             let lhs = eval_expr(lhs, tables, row_cursor)?;
             let rhs = eval_expr(rhs, tables, row_cursor)?;
             let res = match op {
-                Op::Eq => lhs == rhs,
-                Op::Ne => lhs != rhs,
-                Op::Lt => lhs < rhs,
-                Op::Gt => lhs > rhs,
-                Op::Le => lhs <= rhs,
-                Op::Ge => lhs >= rhs,
-                Op::And => coerce_bool(&lhs) && coerce_bool(&rhs),
-                Op::Or => coerce_bool(&lhs) || coerce_bool(&rhs),
+                BinOp::Eq => lhs == rhs,
+                BinOp::Ne => lhs != rhs,
+                BinOp::Lt => lhs < rhs,
+                BinOp::Gt => lhs > rhs,
+                BinOp::Le => lhs <= rhs,
+                BinOp::Ge => lhs >= rhs,
+                BinOp::And => coerce_bool(&lhs) && coerce_bool(&rhs),
+                BinOp::Or => coerce_bool(&lhs) || coerce_bool(&rhs),
+            };
+            Ok((if res { "1" } else { "0" }).to_string())
+        }
+        Expr::Unary { op, operand } => {
+            let val = eval_expr(operand, tables, row_cursor)?;
+            let res = match op {
+                UniOp::Not => !coerce_bool(&val),
             };
             Ok((if res { "1" } else { "0" }).to_string())
         }

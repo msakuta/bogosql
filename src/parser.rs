@@ -10,7 +10,7 @@ use nom::{
 
 use crate::{
     Statement,
-    select::{Cols, Column, Expr, JoinClause, JoinKind, Op},
+    select::{BinOp, Cols, Column, Expr, JoinClause, JoinKind, UniOp},
 };
 
 pub(crate) fn token(i: &str) -> IResult<&str, &str> {
@@ -103,7 +103,7 @@ fn where_clause(i: &str) -> IResult<&str, Expr> {
 }
 
 fn expression(i: &str) -> IResult<&str, Expr> {
-    alt((logical_ex, comparison_ex, term)).parse(i)
+    logical_ex(i)
 }
 
 fn logical_ex(i: &str) -> IResult<&str, Expr> {
@@ -121,9 +121,9 @@ fn logical_ex(i: &str) -> IResult<&str, Expr> {
         move || lhs.clone(),
         |acc, (op, sub_ex)| Expr::Binary {
             op: if op.eq_ignore_ascii_case("AND") {
-                Op::And
+                BinOp::And
             } else {
-                Op::Or
+                BinOp::Or
             },
             lhs: Box::new(acc),
             rhs: Box::new(sub_ex),
@@ -134,9 +134,7 @@ fn logical_ex(i: &str) -> IResult<&str, Expr> {
     Ok((r, res))
 }
 
-fn comparison_ex(i: &str) -> IResult<&str, Expr> {
-    let (r, lhs) = term(i)?;
-
+fn comparison_op(i: &str) -> IResult<&str, BinOp> {
     let (r, op) = delimited(
         multispace0,
         alt((
@@ -150,29 +148,64 @@ fn comparison_ex(i: &str) -> IResult<&str, Expr> {
         )),
         multispace0,
     )
-    .parse(r)?;
+    .parse(i)?;
 
-    let (r, rhs) = expression(r)?;
+    Ok((
+        r,
+        match op {
+            "=" => BinOp::Eq,
+            "<>" => BinOp::Ne,
+            "<" => BinOp::Lt,
+            ">" => BinOp::Gt,
+            "<=" => BinOp::Le,
+            ">=" => BinOp::Ge,
+            _ => unreachable!(),
+        },
+    ))
+}
+
+fn comparison_ex(i: &str) -> IResult<&str, Expr> {
+    let (r, lhs) = term(i)?;
+
+    let Ok((r, op)) = comparison_op(r) else {
+        return Ok((r, lhs));
+    };
+
+    let (r, rhs) = term(r)?;
 
     Ok((
         r,
         Expr::Binary {
-            op: match op {
-                "=" => Op::Eq,
-                "<>" => Op::Ne,
-                "<" => Op::Lt,
-                ">" => Op::Gt,
-                "<=" => Op::Le,
-                ">=" => Op::Ge,
-                _ => unreachable!(),
-            },
+            op,
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
         },
     ))
 }
 
+fn not(i: &str) -> IResult<&str, Expr> {
+    let (r, _) = delimited(multispace0, tag_no_case("NOT"), multispace0).parse(i)?;
+
+    let (r, res) = comparison_ex(r)?;
+
+    Ok((
+        r,
+        Expr::Unary {
+            op: UniOp::Not,
+            operand: Box::new(res),
+        },
+    ))
+}
+
 fn term(i: &str) -> IResult<&str, Expr> {
+    if let Ok((r, res)) = not(i) {
+        return Ok((r, res));
+    }
+
+    if let Ok((r, res)) = parentheses(i) {
+        return Ok((r, res));
+    }
+
     if let Ok((r, lit)) = str_literal(i) {
         return Ok((r, Expr::StrLiteral(lit)));
     }
@@ -185,6 +218,13 @@ fn term(i: &str) -> IResult<&str, Expr> {
         i,
         nom::error::ErrorKind::Verify,
     )))
+}
+
+fn parentheses(i: &str) -> IResult<&str, Expr> {
+    let (r, _) = delimited(multispace0, tag("("), multispace0).parse(i)?;
+    let (r, res) = expression(r)?;
+    let (r, _) = delimited(multispace0, tag(")"), multispace0).parse(r)?;
+    Ok((r, res))
 }
 
 fn str_literal(i: &str) -> IResult<&str, String> {
@@ -274,7 +314,7 @@ mod test {
                     table: "table2".to_string(),
                     kind: JoinKind::Inner,
                     condition: Expr::Binary {
-                        op: Op::Eq,
+                        op: BinOp::Eq,
                         lhs: Box::new(Expr::Column(Column::new("id"))),
                         rhs: Box::new(Expr::Column(Column::new("id2")))
                     },
@@ -293,6 +333,95 @@ mod test {
                 input: "id, data FROM table",
                 code: nom::error::ErrorKind::Verify
             }))
+        );
+    }
+
+    #[test]
+    fn test_logical() {
+        let src = "'1' AND '2' < '3'";
+        assert_eq!(
+            expression(src),
+            Ok((
+                "",
+                Expr::Binary {
+                    op: BinOp::And,
+                    lhs: Box::new(Expr::StrLiteral("1".to_string())),
+                    rhs: Box::new(Expr::Binary {
+                        op: BinOp::Lt,
+                        lhs: Box::new(Expr::StrLiteral("2".to_string())),
+                        rhs: Box::new(Expr::StrLiteral("3".to_string())),
+                    })
+                }
+            ))
+        );
+
+        let src = "'1' < '2' OR '3'";
+        assert_eq!(
+            expression(src),
+            Ok((
+                "",
+                Expr::Binary {
+                    op: BinOp::Or,
+                    lhs: Box::new(Expr::Binary {
+                        op: BinOp::Lt,
+                        lhs: Box::new(Expr::StrLiteral("1".to_string())),
+                        rhs: Box::new(Expr::StrLiteral("2".to_string())),
+                    }),
+                    rhs: Box::new(Expr::StrLiteral("3".to_string())),
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn test_not() {
+        let src = "NOT '1'";
+        assert_eq!(
+            expression(src),
+            Ok((
+                "",
+                Expr::Unary {
+                    op: UniOp::Not,
+                    operand: Box::new(Expr::StrLiteral("1".to_string()))
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn test_paren() {
+        let src = "('1' AND '2') <= '3'";
+        assert_eq!(
+            expression(src),
+            Ok((
+                "",
+                Expr::Binary {
+                    op: BinOp::Le,
+                    lhs: Box::new(Expr::Binary {
+                        op: BinOp::And,
+                        lhs: Box::new(Expr::StrLiteral("1".to_string())),
+                        rhs: Box::new(Expr::StrLiteral("2".to_string())),
+                    }),
+                    rhs: Box::new(Expr::StrLiteral("3".to_string())),
+                }
+            ))
+        );
+
+        let src = "'1' > ('2' AND '3')";
+        assert_eq!(
+            expression(src),
+            Ok((
+                "",
+                Expr::Binary {
+                    op: BinOp::Gt,
+                    lhs: Box::new(Expr::StrLiteral("1".to_string())),
+                    rhs: Box::new(Expr::Binary {
+                        op: BinOp::And,
+                        lhs: Box::new(Expr::StrLiteral("2".to_string())),
+                        rhs: Box::new(Expr::StrLiteral("3".to_string())),
+                    }),
+                }
+            ))
         );
     }
 }
