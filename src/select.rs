@@ -377,8 +377,9 @@ fn exec_select_sub(
 
     let has_left_join = join_allow_none.iter().any(|a| *a);
 
-    let check_print = |row_cursor: &[RowCursor]| {
-        if ctx.sql.join.is_empty() {
+    // Returns whether to print the row. Most of the combinations in a join is typically filtered out.
+    let check_print = |row_cursor: &[RowCursor]| -> Result<bool, Box<dyn Error>> {
+        let join_cond = if ctx.sql.join.is_empty() {
             row_cursor.iter().all(|r| r.row.is_some())
         } else {
             ctx.sql.join.iter().all(|join| {
@@ -398,11 +399,20 @@ fn exec_select_sub(
                         r.row.is_some()
                     }
                 })
-        }
+        };
+        let res = join_cond
+            && ctx
+                .sql
+                .condition
+                .as_ref()
+                .map_or(Ok::<bool, Box<dyn Error>>(true), |cond| {
+                    Ok(coerce_bool(&eval_expr(cond, cols, ctx, row_cursor)?))
+                })?;
+        Ok(res)
     };
 
     loop {
-        if check_print(&row_cursor) {
+        if check_print(&row_cursor)? {
             for rc in row_cursor.iter_mut() {
                 rc.shown = true;
             }
