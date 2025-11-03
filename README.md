@@ -23,12 +23,12 @@ SELECT author_id, title, name FROM authors INNER JOIN books ON author_id = autho
 Result:
 
 ```
-author_id | title                 | name
-----------+-----------------------+--------------------
-1         | I, Robot              | Issac Asimov
-1         | Cave of Steel         | Issac Asimov
-2         | Moon's Harsh Mistress | Robert A. Heinlein
-2         | Starship Troopers     | Robert A. Heinlein
+author_id | title                        | name
+----------+------------------------------+--------------------
+1         | I, Robot                     | Issac Asimov
+1         | The Caves of Steel           | Issac Asimov
+2         | The Moon Is a Harsh Mistress | Robert A. Heinlein
+2         | Starship Troopers            | Robert A. Heinlein
 ```
 
 Left join
@@ -39,31 +39,30 @@ SELECT * FROM authors LEFT JOIN books ON author_id = author
 Result:
 
 ```
-author_id | name               | book_id | title                 | author
-----------+--------------------+---------+-----------------------+--------
-1         | Issac Asimov       | 101     | I, Robot              | 1
-1         | Issac Asimov       | 201     | Cave of Steel         | 1
-2         | Robert A. Heinlein | 102     | Moon's Harsh Mistress | 2
-2         | Robert A. Heinlein | 202     | Starship Troopers     | 2
-3         | Arthur C. Clarke   |         |                       |
+author_id | name               | book_id | title                        | author
+----------+--------------------+---------+------------------------------+--------
+1         | Issac Asimov       | 101     | I, Robot                     | 1
+1         | Issac Asimov       | 201     | The Caves of Steel           | 1
+2         | Robert A. Heinlein | 102     | The Moon Is a Harsh Mistress | 2
+2         | Robert A. Heinlein | 202     | Starship Troopers            | 2
+3         | Arthur C. Clarke   |         |                              |
 ```
 
 Multiple joins:
 
 ```
-SELECT * FROM authors INNER JOIN books ON author_id = author INNER JOIN pages ON book = book_id
+SELECT * FROM authors INNER JOIN books ON author_id = books.author INNER JOIN characters ON book = book_id
 ```
 
-Result (still has a bug!):
+Result:
 
 ```
-author_id | name         | book_id | title         | author | book | page | text
-----------+--------------+---------+---------------+--------+------+------+----------
-1         | Issac Asimov | 101     | I, Robot      | 1      | 101  | 1    | Title
-1         | Issac Asimov | 101     | I, Robot      | 1      | 101  | 2    | Preface
-1         | Issac Asimov | 201     | Cave of Steel | 1      | 201  | 1    | Mistress
-1         | Issac Asimov | 201     | Cave of Steel | 1      | 201  | 2    | is
-1         | Issac Asimov | 201     | Cave of Steel | 1      | 201  | 3    | harsh
+author_id | name               | book_id | title                        | author | book | char_id | name
+----------+--------------------+---------+------------------------------+--------+------+---------+--------------
+1         | Issac Asimov       | 101     | I, Robot                     | 1      | 101  | 1       | Elijah Baley
+1         | Issac Asimov       | 101     | I, Robot                     | 1      | 101  | 2       | R. Sammy
+2         | Robert A. Heinlein | 102     | The Moon Is a Harsh Mistress | 2      | 102  | 1       | Manuel
+2         | Robert A. Heinlein | 102     | The Moon Is a Harsh Mistress | 2      | 102  | 2       | Wyoming
 ```
 
 ## Features
