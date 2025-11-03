@@ -3,7 +3,7 @@ mod eval;
 mod parser;
 mod select;
 
-use std::{collections::HashMap, fs::read_dir};
+use std::{collections::HashMap, error::Error, fs::read_dir};
 
 use nom::Finish;
 
@@ -19,7 +19,7 @@ enum Statement {
 
 type Database = HashMap<String, Table>;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Table {
     name: String,
     schema: Vec<RowSchema>,
@@ -33,9 +33,38 @@ impl Table {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct RowSchema {
     name: String,
+}
+
+fn make_table(name: &str, csv: &str) -> Result<Table, Box<dyn Error>> {
+    let csv = crate::csv::parse_csv(&csv)?;
+    let schema = csv
+        .first()
+        .ok_or_else(|| "CSV needs at least 1 line for the header".to_string())?
+        .iter()
+        .map(|r| RowSchema {
+            name: r.trim().to_string(),
+        })
+        .collect::<Vec<_>>();
+    let mut data = vec![];
+    for record in &csv[1..] {
+        if record.len() == 0 {
+            continue;
+        }
+        if record.len() != schema.len() {
+            return Err("CSV needs the same number of columns as the header".into());
+        }
+        for cell in record {
+            data.push(cell.trim().to_string());
+        }
+    }
+    Ok(Table {
+        name: name.to_string(),
+        schema,
+        data,
+    })
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -47,44 +76,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             && t.is_file()
         {
             let str = std::fs::read_to_string(f.path())?;
-            let csv = crate::csv::parse_csv(&str)?;
-            let schema = csv
-                .first()
-                .ok_or_else(|| "CSV needs at least 1 line for the header".to_string())?
-                .iter()
-                .map(|r| RowSchema {
-                    name: r.trim().to_string(),
-                })
-                .collect::<Vec<_>>();
-            let mut data = vec![];
-            for record in &csv[1..] {
-                if record.len() == 0 {
-                    continue;
-                }
-                if record.len() != schema.len() {
-                    return Err(format!(
-                        "error processing file {file:?}: CSV needs the same number of columns as the header",
-                        file = f.path().to_str()
-                    )
-                    .into());
-                }
-                for cell in record {
-                    data.push(cell.trim().to_string());
-                }
-            }
             let path = f.path();
             let Some(name) = path.file_stem() else {
                 continue;
             };
             let table_name = name.to_string_lossy().to_string();
-            db.insert(
-                table_name.clone(),
-                Table {
-                    name: table_name,
-                    schema,
-                    data,
-                },
-            );
+            let table = make_table(&table_name, &str).map_err(|e| {
+                format!(
+                    "error processing file {file:?}: {e}",
+                    file = f.path().to_str()
+                )
+            })?;
+            db.insert(table_name, table);
         }
     }
 
@@ -108,4 +111,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_make_table() {
+        let csv = r#"id,name
+1, a
+2, b
+3, c
+"#;
+        let table_name = "a";
+        let table = make_table(table_name, csv).unwrap();
+        assert_eq!(
+            table,
+            Table {
+                name: table_name.to_string(),
+                schema: vec![
+                    RowSchema {
+                        name: "id".to_string()
+                    },
+                    RowSchema {
+                        name: "name".to_string()
+                    }
+                ],
+                data: ["1", "a", "2", "b", "3", "c"]
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect(),
+            }
+        )
+    }
 }

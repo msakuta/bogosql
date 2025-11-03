@@ -377,25 +377,32 @@ fn exec_select_sub(
 
     let has_left_join = join_allow_none.iter().any(|a| *a);
 
+    let check_print = |row_cursor: &[RowCursor]| {
+        if ctx.sql.join.is_empty() {
+            row_cursor.iter().all(|r| r.row.is_some())
+        } else {
+            ctx.sql.join.iter().all(|join| {
+                let val = dbg!(eval_expr(&join.condition, &cols, ctx, &row_cursor));
+                match val {
+                    Ok(val) => coerce_bool(&val),
+                    Err(EvalError::CursorNone(table_idx)) => {
+                        dbg!(join_allow_none[table_idx]) && !row_cursor[table_idx].shown
+                    }
+                    _ => false,
+                }
+            }) || has_left_join
+                && row_cursor.iter().zip(join_allow_none.iter()).all(|(r, a)| {
+                    if *a {
+                        r.row.is_none() && !r.shown
+                    } else {
+                        r.row.is_some()
+                    }
+                })
+        }
+    };
+
     loop {
-        if ctx.sql.join.iter().all(|join| {
-            let val = eval_expr(&join.condition, &cols, ctx, &row_cursor);
-            match val {
-                Ok(val) => coerce_bool(&val),
-                Err(EvalError::CursorNone(table_idx)) => {
-                    join_allow_none[table_idx] && !row_cursor[table_idx].shown
-                }
-                _ => false,
-            }
-        }) || has_left_join
-            && row_cursor.iter().zip(join_allow_none.iter()).all(|(r, a)| {
-                if *a {
-                    r.row.is_none() && !r.shown
-                } else {
-                    r.row.is_some()
-                }
-            })
-        {
+        if check_print(&row_cursor) {
             for rc in row_cursor.iter_mut() {
                 rc.shown = true;
             }
@@ -417,4 +424,52 @@ fn exec_select_sub(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::{Statement, make_table, parser::statement};
+    use nom::Finish;
+
+    #[test]
+    fn test_sql() {
+        let csv = r#"id,name
+1, a
+2, b
+3, c
+"#;
+        let mut db = HashMap::new();
+        let table_name = "t".to_string();
+        let table = make_table(&table_name, csv).unwrap();
+        db.insert(table_name.clone(), table);
+        let sql = "SELECT * FROM t";
+        let (_, stmt) = statement(&sql).finish().unwrap();
+        let mut buf = BufferOutput(vec![]);
+        match stmt {
+            Statement::Select(stmt) => exec_select(&mut buf, &db, &stmt).unwrap(),
+        }
+        assert_eq!(buf.0, vec![vec!["1", "a"], vec!["2", "b"], vec!["3", "c"]])
+    }
+
+    #[test]
+    fn test_where() {
+        let csv = r#"id,name
+1, a
+2, b
+3, c
+"#;
+        let mut db = HashMap::new();
+        let table_name = "t".to_string();
+        let table = make_table(&table_name, csv).unwrap();
+        db.insert(table_name.clone(), table);
+        let sql = "SELECT * FROM t WHERE id = '1'";
+        let (_, stmt) = statement(&sql).finish().unwrap();
+        let mut buf = BufferOutput(vec![]);
+        match stmt {
+            Statement::Select(stmt) => exec_select(&mut buf, &db, &stmt).unwrap(),
+        }
+    }
 }
