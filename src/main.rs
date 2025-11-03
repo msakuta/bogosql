@@ -9,7 +9,7 @@ use nom::Finish;
 
 use crate::{
     parser::statement,
-    select::{CsvOutput, SelectStmt, exec_select},
+    select::{CsvOutput, SelectStmt, exec_select, format_select},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -91,9 +91,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let src = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| "SELECT id, data FROM phonebook".to_string());
+    let mut src = "SELECT id, data FROM phonebook".to_string();
+    let mut csv = false;
+    for s in std::env::args() {
+        match s.as_str() {
+            "-c" => csv = true,
+            _ => src = s,
+        }
+    }
 
     let (rest, stmt) = statement(&src).finish().unwrap();
 
@@ -103,10 +108,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match stmt {
         Statement::Select(ref rows) => {
-            let mut buf = CsvOutput(vec![]);
-            let _ = exec_select(&mut buf, &db, rows)?;
-            let out = String::from_utf8(buf.0)?;
-            println!("Result: \n{out}");
+            if csv {
+                let mut buf = CsvOutput(vec![]);
+                let _ = exec_select(&mut buf, &db, rows)?;
+                let out = String::from_utf8(buf.0)?;
+                println!("Result: \n{out}");
+            } else {
+                let mut buf: Vec<u8> = vec![];
+                format_select(&mut buf, &db, rows)?;
+                let out = String::from_utf8(buf)?;
+                println!("Result: \n{out}");
+            }
         }
     }
 

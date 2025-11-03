@@ -17,31 +17,53 @@ The tables are defined in CSV files in `data` directory, whose file names withou
 Inner join
 
 ```
-"SELECT author_id, title, name FROM authors INNER JOIN books ON author_id = author"
+SELECT author_id, title, name FROM authors INNER JOIN books ON author_id = author
 ```
 
 Result:
 
 ```
-1,I, Robot,Asimov,
-1,Cave of Steel,Asimov,
-2,Moon's Harsh Mistress,Heinlein,
+author_id | title                 | name
+----------+-----------------------+--------------------
+1         | I, Robot              | Issac Asimov
+1         | Cave of Steel         | Issac Asimov
+2         | Moon's Harsh Mistress | Robert A. Heinlein
+2         | Starship Troopers     | Robert A. Heinlein
+```
+
+Left join
+
+```
+SELECT * FROM authors LEFT JOIN books ON author_id = author
+```
+Result:
+
+```
+author_id | name               | book_id | title                 | author
+----------+--------------------+---------+-----------------------+--------
+1         | Issac Asimov       | 101     | I, Robot              | 1
+1         | Issac Asimov       | 201     | Cave of Steel         | 1
+2         | Robert A. Heinlein | 102     | Moon's Harsh Mistress | 2
+2         | Robert A. Heinlein | 202     | Starship Troopers     | 2
+3         | Arthur C. Clarke   |         |                       |
 ```
 
 Multiple joins:
 
 ```
-"SELECT * FROM authors INNER JOIN books ON author_id = author INNER JOIN pages ON book = book_id"
+SELECT * FROM authors INNER JOIN books ON author_id = author INNER JOIN pages ON book = book_id
 ```
 
-Result:
+Result (still has a bug!):
 
 ```
-1,Asimov,101,I, Robot,1,101,1,Title,
-1,Asimov,101,I, Robot,1,101,2,Preface,
-2,Heinlein,201,Moon's Harsh Mistress,2,201,1,Mistress,
-2,Heinlein,201,Moon's Harsh Mistress,2,201,2,is,
-2,Heinlein,201,Moon's Harsh Mistress,2,201,3,harsh,
+author_id | name         | book_id | title         | author | book | page | text
+----------+--------------+---------+---------------+--------+------+------+----------
+1         | Issac Asimov | 101     | I, Robot      | 1      | 101  | 1    | Title
+1         | Issac Asimov | 101     | I, Robot      | 1      | 101  | 2    | Preface
+1         | Issac Asimov | 201     | Cave of Steel | 1      | 201  | 1    | Mistress
+1         | Issac Asimov | 201     | Cave of Steel | 1      | 201  | 2    | is
+1         | Issac Asimov | 201     | Cave of Steel | 1      | 201  | 3    | harsh
 ```
 
 ## Features

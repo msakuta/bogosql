@@ -191,26 +191,29 @@ impl<'a> QueryContext<'a> {
 fn extend_colspecs<'a>(
     ctx: &'a QueryContext<'a>,
     colspecs: &'a [ColSpecifier],
-) -> Result<Vec<Expr>, Box<dyn Error>> {
-    let mut ret = vec![];
+) -> Result<(Vec<Expr>, Vec<String>), Box<dyn Error>> {
+    let mut exprs = vec![];
+    let mut header = vec![];
     for col_spec in colspecs {
         match col_spec {
             ColSpecifier::Wildcard => {
                 for (_i, table) in ctx.tables.iter().enumerate() {
                     for (_j, col) in table.schema.iter().enumerate() {
-                        ret.push(Expr::Column(Column {
+                        exprs.push(Expr::Column(Column {
                             table: Some(table.name.clone()),
                             column: col.name.to_string(),
                         }));
+                        header.push(col.name.clone());
                     }
                 }
             }
             ColSpecifier::Name(col) => {
-                ret.push(Expr::Column(col.clone()));
+                exprs.push(Expr::Column(col.clone()));
+                header.push(col.column.clone());
             }
         }
     }
-    Ok(ret)
+    Ok((exprs, header))
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -263,6 +266,7 @@ pub trait QueryOutput {
     fn output(&mut self, row: &[String]) -> Result<(), Box<dyn Error>>;
 }
 
+#[derive(Default, Debug)]
 pub struct CsvOutput(pub Vec<u8>);
 
 impl QueryOutput for CsvOutput {
@@ -275,13 +279,62 @@ impl QueryOutput for CsvOutput {
     }
 }
 
+#[derive(Default, Debug)]
 struct BufferOutput(Vec<Vec<String>>);
+
+impl BufferOutput {
+    fn format(&self, f: &mut impl Write) -> std::io::Result<()> {
+        let num_cols = self.0.first().map_or(0, |header| header.len());
+        let col_widths: Vec<_> = (0..num_cols)
+            .map(|col| self.0.iter().map(|row| row[col].len()).max().unwrap_or(0))
+            .collect();
+        if let Some(header) = self.0.first() {
+            for (i, cell) in header.iter().enumerate() {
+                write!(f, "{:width$}", cell, width = col_widths[i])?;
+                if i != header.len() - 1 {
+                    write!(f, " | ")?;
+                }
+            }
+            writeln!(f, "")?;
+            for (i, col_width) in col_widths.iter().enumerate() {
+                for _ in 0..col_width + 1 {
+                    write!(f, "-")?;
+                }
+                if i != col_widths.len() - 1 {
+                    write!(f, "+-")?;
+                }
+            }
+            writeln!(f, "")?;
+        }
+        for row in &self.0[1..] {
+            for (i, cell) in row.iter().enumerate() {
+                write!(f, "{:width$}", cell, width = col_widths[i])?;
+                if i != row.len() - 1 {
+                    write!(f, " | ")?;
+                }
+            }
+            writeln!(f, "")?;
+        }
+        Ok(())
+    }
+}
 
 impl QueryOutput for BufferOutput {
     fn output(&mut self, row: &[String]) -> Result<(), Box<dyn Error>> {
         self.0.push(row.to_vec());
         Ok(())
     }
+}
+
+pub fn format_select(
+    out: &mut impl Write,
+    db: &Database,
+    sql: &SelectStmt,
+) -> Result<(), Box<dyn Error>> {
+    let mut buf = BufferOutput::default();
+    exec_select(&mut buf, db, sql)?;
+    buf.format(out)?;
+    Ok(())
 }
 
 pub fn exec_select(
@@ -327,7 +380,10 @@ pub fn exec_select(
     if let Some(ref order_by) = sql.ordering {
         let mut buf = BufferOutput(vec![]);
         let mut subsql = sql.clone();
-        let mut cols = extend_colspecs(&ctx, &sql.cols)?;
+        let (mut cols, names) = extend_colspecs(&ctx, &sql.cols)?;
+
+        out.output(&names)?;
+
         let col_idx = cols.len();
         cols.push(order_by.expr.clone());
         subsql.ordering = None;
@@ -349,7 +405,9 @@ pub fn exec_select(
         return Ok(());
     }
 
-    let cols = extend_colspecs(&ctx, &ctx.sql.cols)?;
+    let (cols, names) = extend_colspecs(&ctx, &ctx.sql.cols)?;
+
+    out.output(&names)?;
 
     exec_select_sub(out, &ctx, &cols)
 }
@@ -383,11 +441,11 @@ fn exec_select_sub(
             row_cursor.iter().all(|r| r.row.is_some())
         } else {
             ctx.sql.join.iter().all(|join| {
-                let val = dbg!(eval_expr(&join.condition, &cols, ctx, &row_cursor));
+                let val = eval_expr(&join.condition, &cols, ctx, &row_cursor);
                 match val {
                     Ok(val) => coerce_bool(&val),
                     Err(EvalError::CursorNone(table_idx)) => {
-                        dbg!(join_allow_none[table_idx]) && !row_cursor[table_idx].shown
+                        join_allow_none[table_idx] && !row_cursor[table_idx].shown
                     }
                     _ => false,
                 }
@@ -461,7 +519,15 @@ mod test {
         match stmt {
             Statement::Select(stmt) => exec_select(&mut buf, &db, &stmt).unwrap(),
         }
-        assert_eq!(buf.0, vec![vec!["1", "a"], vec!["2", "b"], vec!["3", "c"]])
+        assert_eq!(
+            buf.0,
+            vec![
+                vec!["id", "name"],
+                vec!["1", "a"],
+                vec!["2", "b"],
+                vec!["3", "c"]
+            ]
+        )
     }
 
     #[test]
