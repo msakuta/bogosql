@@ -11,7 +11,7 @@ use nom::{
     bytes::complete::tag,
     character::complete::{multispace0, none_of},
     combinator::recognize,
-    multi::{fold_many0, many1},
+    multi::{fold_many0, many0, many1},
     sequence::{delimited, pair},
 };
 
@@ -62,7 +62,7 @@ fn unquoted_cell(i: &str) -> IResult<&str, String> {
 
 fn quoted_cell(i: &str) -> IResult<&str, String> {
     let (r, _) = pair(multispace0, tag("\"")).parse(i)?;
-    let (r, val) = recognize(many1(none_of("\"\n"))).parse(r)?;
+    let (r, val) = recognize(many0(none_of("\"\n"))).parse(r)?;
     let (r, _) = tag("\"")(r)?;
     Ok((r, val.to_string()))
 }
