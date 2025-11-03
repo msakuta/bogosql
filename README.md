@@ -60,7 +60,7 @@ Increasingly difficult TODOs
 * [x] INNER JOIN
 * [x] LEFT JOIN
 * [x] Aliases (`AS`)
-* [ ] Ordering (`ORDER BY col`)
+* [x] Ordering (`ORDER BY col`)
 * [ ] LIMIT, OFFSET
 * [ ] DISTINCT
 * [ ] Expressions

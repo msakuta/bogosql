@@ -4,13 +4,16 @@ use nom::{
     bytes::complete::{tag, tag_no_case},
     character::complete::{alpha1, alphanumeric1, multispace0, multispace1, none_of},
     combinator::{opt, recognize},
-    multi::{fold_many0, many0},
-    sequence::{delimited, pair},
+    multi::{fold_many0, many0, separated_list0},
+    sequence::{delimited, pair, terminated},
 };
 
 use crate::{
     Statement,
-    select::{BinOp, Cols, Column, Expr, JoinClause, JoinKind, TableSpecifier, UniOp},
+    select::{
+        BinOp, ColSpecifier, Column, Expr, JoinClause, JoinKind, OrderBy, Ordering, TableSpecifier,
+        UniOp,
+    },
 };
 
 pub(crate) fn token(i: &str) -> IResult<&str, &str> {
@@ -29,13 +32,15 @@ pub fn statement(i: &str) -> IResult<&str, Statement> {
     let (r, directive) = token(i)?;
     let (r, stmt) = match directive.to_lowercase().as_str() {
         "select" => {
-            let (r, cols) = alt((columns_wildcard, columns)).parse(r)?;
+            let (r, cols) = separated_list0(tag(","), alt((col_wildcard, col_spec))).parse(r)?;
 
             let (r, table) = from_table(r)?;
 
             let (r, join) = many0(join).parse(r)?;
 
             let (r, condition) = opt(where_clause).parse(r)?;
+
+            let (r, ordering) = opt(order_by).parse(r)?;
 
             (
                 r,
@@ -44,6 +49,7 @@ pub fn statement(i: &str) -> IResult<&str, Statement> {
                     table,
                     join,
                     condition,
+                    ordering,
                 }),
             )
         }
@@ -111,6 +117,40 @@ fn join(i: &str) -> IResult<&str, JoinClause> {
     ))
 }
 
+fn order_by(i: &str) -> IResult<&str, OrderBy> {
+    let (r, _) = (
+        multispace0,
+        tag_no_case("ORDER"),
+        multispace1,
+        tag_no_case("BY"),
+        multispace1,
+    )
+        .parse(i)?;
+
+    let (r, col) = column(r)?;
+
+    let (r, ordering) = opt(delimited(
+        multispace0,
+        alt((tag_no_case("ASC"), tag_no_case("DESC"))),
+        multispace0,
+    ))
+    .parse(r)?;
+
+    Ok((
+        r,
+        OrderBy {
+            col,
+            ordering: ordering.map_or(Ordering::Asc, |o| {
+                if o.eq_ignore_ascii_case("ASC") {
+                    Ordering::Asc
+                } else {
+                    Ordering::Desc
+                }
+            }),
+        },
+    ))
+}
+
 fn where_clause(i: &str) -> IResult<&str, Expr> {
     let (r, _) = delimited(multispace0, tag_no_case("WHERE"), multispace0).parse(i)?;
 
@@ -129,7 +169,7 @@ fn logical_ex(i: &str) -> IResult<&str, Expr> {
             delimited(
                 multispace0,
                 alt((tag_no_case("AND"), tag_no_case("OR"))),
-                multispace0,
+                multispace1,
             ),
             comparison_ex,
         ),
@@ -265,35 +305,24 @@ fn ident(i: &str) -> IResult<&str, String> {
     Ok((r, id.to_string()))
 }
 
-fn columns_wildcard(i: &str) -> IResult<&str, Cols> {
+fn col_wildcard(i: &str) -> IResult<&str, ColSpecifier> {
     let (r, _) = delimited(multispace0, tag("*"), multispace0).parse(i)?;
-    Ok((r, Cols::Wildcard))
+    Ok((r, ColSpecifier::Wildcard))
 }
 
-fn columns(i: &str) -> IResult<&str, Cols> {
-    let (r, first) = column(i)?;
-    let (r, res) = fold_many0(
-        pair(delimited(multispace0, tag(","), multispace0), column),
-        move || vec![first.clone()],
-        |mut acc, (_, token)| {
-            acc.push(token);
-            acc
-        },
-    )
-    .parse(r)?;
-    Ok((r, Cols::List(res)))
+fn col_spec(i: &str) -> IResult<&str, ColSpecifier> {
+    let (r, res) = column(i)?;
+    Ok((r, ColSpecifier::Name(res)))
 }
 
 fn column(i: &str) -> IResult<&str, Column> {
-    let (r, table) = opt(pair(ident, delimited(multispace0, tag("."), multispace0))).parse(i)?;
-    let (r, column) = ident(r)?;
-    Ok((
-        r,
-        Column {
-            table: table.map(|(table, _)| table),
-            column,
-        },
+    let (r, table) = opt(terminated(
+        ident,
+        delimited(multispace0, tag("."), multispace0),
     ))
+    .parse(i)?;
+    let (r, column) = ident(r)?;
+    Ok((r, Column { table, column }))
 }
 
 #[cfg(test)]
@@ -324,10 +353,14 @@ mod test {
         assert_eq!(
             statement(src).unwrap().1,
             Statement::Select(SelectStmt {
-                cols: Cols::List(vec![Column::new("id"), Column::new("data")]),
+                cols: vec![
+                    ColSpecifier::Name(Column::new("id")),
+                    ColSpecifier::Name(Column::new("data"))
+                ],
                 table: TableSpecifier::new("table"),
                 join: vec![],
                 condition: None,
+                ordering: None,
             })
         );
     }
@@ -338,10 +371,11 @@ mod test {
         assert_eq!(
             statement(src).unwrap().1,
             Statement::Select(SelectStmt {
-                cols: Cols::Wildcard,
+                cols: vec![ColSpecifier::Wildcard],
                 table: TableSpecifier::new_with_alias("table", "t"),
                 join: vec![],
                 condition: None,
+                ordering: None,
             })
         );
     }
@@ -353,7 +387,10 @@ mod test {
         assert_eq!(
             statement(src).unwrap().1,
             Statement::Select(SelectStmt {
-                cols: Cols::List(vec![Column::new("id"), Column::new("data")]),
+                cols: vec![
+                    ColSpecifier::Name(Column::new("id")),
+                    ColSpecifier::Name(Column::new("data"))
+                ],
                 table: TableSpecifier::new("table"),
                 join: vec![JoinClause {
                     table: TableSpecifier::new("table2"),
@@ -365,6 +402,7 @@ mod test {
                     },
                 }],
                 condition: None,
+                ordering: None,
             })
         );
     }
@@ -378,6 +416,54 @@ mod test {
                 input: "id, data FROM table",
                 code: nom::error::ErrorKind::Verify
             }))
+        );
+    }
+
+    #[test]
+    fn test_order_by() {
+        let src = "SELECT id, data FROM table ORDER BY id";
+        assert_eq!(
+            statement(src).unwrap().1,
+            Statement::Select(SelectStmt {
+                cols: vec![
+                    ColSpecifier::Name(Column::new("id")),
+                    ColSpecifier::Name(Column::new("data"))
+                ],
+                table: TableSpecifier::new("table"),
+                join: vec![],
+                condition: None,
+                ordering: Some(OrderBy {
+                    col: Column {
+                        table: None,
+                        column: "id".to_string(),
+                    },
+                    ordering: Ordering::Asc,
+                }),
+            })
+        );
+    }
+
+    #[test]
+    fn test_where_and_order_by() {
+        let src = "SELECT id, data FROM table WHERE '1' ORDER BY id";
+        assert_eq!(
+            statement(src).unwrap().1,
+            Statement::Select(SelectStmt {
+                cols: vec![
+                    ColSpecifier::Name(Column::new("id")),
+                    ColSpecifier::Name(Column::new("data"))
+                ],
+                table: TableSpecifier::new("table"),
+                join: vec![],
+                condition: Some(Expr::StrLiteral("1".to_string())),
+                ordering: Some(OrderBy {
+                    col: Column {
+                        table: None,
+                        column: "id".to_string(),
+                    },
+                    ordering: Ordering::Asc,
+                }),
+            })
         );
     }
 

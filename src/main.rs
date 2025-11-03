@@ -9,7 +9,7 @@ use nom::Finish;
 
 use crate::{
     parser::statement,
-    select::{SelectStmt, exec_select},
+    select::{CsvOutput, SelectStmt, exec_select},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -100,9 +100,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match stmt {
         Statement::Select(ref rows) => {
-            let mut buf = vec![];
+            let mut buf = CsvOutput(vec![]);
             let _ = exec_select(&mut buf, &db, rows)?;
-            let out = String::from_utf8(buf)?;
+            let out = String::from_utf8(buf.0)?;
             println!("Result: \n{out}");
         }
     }

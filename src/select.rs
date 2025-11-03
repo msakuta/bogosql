@@ -2,15 +2,16 @@ use std::{collections::HashMap, error::Error, io::Write};
 
 use crate::{
     Database, Table,
-    eval::{EvalError, eval_expr},
+    eval::{EvalError, coerce_bool, eval_expr},
 };
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectStmt {
-    pub cols: Cols,
+    pub cols: Vec<ColSpecifier>,
     pub table: TableSpecifier,
     pub join: Vec<JoinClause>,
     pub condition: Option<Expr>,
+    pub ordering: Option<OrderBy>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -20,9 +21,9 @@ pub struct TableSpecifier {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Cols {
+pub enum ColSpecifier {
     Wildcard,
-    List(Vec<Column>),
+    Name(Column),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -36,6 +37,18 @@ pub struct JoinClause {
 pub enum JoinKind {
     Inner,
     Left,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrderBy {
+    pub col: Column,
+    pub ordering: Ordering,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Ordering {
+    Asc,
+    Desc,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,6 +135,7 @@ impl<'a> ColRef<'a> {
 }
 
 struct QueryContext<'a> {
+    sql: &'a SelectStmt,
     tables: Vec<&'a Table>,
     aliases: HashMap<&'a String, usize>,
 }
@@ -165,6 +179,33 @@ fn find_col<'a>(ctx: &QueryContext<'a>, column: &Column) -> Option<ColRef<'a>> {
             }
             acc
         })
+}
+
+fn extend_colspecs<'a>(
+    ctx: &'a QueryContext<'a>,
+    colspecs: &'a [ColSpecifier],
+) -> Result<Vec<ColRef<'a>>, Box<dyn Error>> {
+    let mut ret = vec![];
+    for col_spec in colspecs {
+        match col_spec {
+            ColSpecifier::Wildcard => {
+                for (i, table) in ctx.tables.iter().enumerate() {
+                    for (j, _col) in table.schema.iter().enumerate() {
+                        ret.push(ColRef {
+                            table: *table,
+                            joindex: i,
+                            col: j,
+                        });
+                    }
+                }
+            }
+            ColSpecifier::Name(col) => {
+                let col = find_col(ctx, col).ok_or_else(|| format!("Column {} not found", col))?;
+                ret.push(col);
+            }
+        }
+    }
+    Ok(ret)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -213,8 +254,33 @@ fn incr_row_cursor(row_cursor: &mut [RowCursor], row_counts: &[usize]) -> bool {
     true
 }
 
+pub trait QueryOutput {
+    fn output(&mut self, row: &[String]) -> Result<(), Box<dyn Error>>;
+}
+
+pub struct CsvOutput(pub Vec<u8>);
+
+impl QueryOutput for CsvOutput {
+    fn output(&mut self, row: &[String]) -> Result<(), Box<dyn Error>> {
+        for cell in row {
+            write!(&mut self.0, "{},", cell)?;
+        }
+        writeln!(&mut self.0, "")?;
+        Ok(())
+    }
+}
+
+struct BufferOutput(Vec<Vec<String>>);
+
+impl QueryOutput for BufferOutput {
+    fn output(&mut self, row: &[String]) -> Result<(), Box<dyn Error>> {
+        self.0.push(row.to_vec());
+        Ok(())
+    }
+}
+
 pub fn exec_select(
-    out: &mut impl Write,
+    out: &mut impl QueryOutput,
     db: &Database,
     sql: &SelectStmt,
 ) -> Result<(), Box<dyn Error>> {
@@ -227,48 +293,77 @@ pub fn exec_select(
         aliases.insert(alias, 0);
     }
 
-    let joined_tables = std::iter::once(Ok(table))
-        .chain(sql.join.iter().enumerate().map(|(i, join)| {
-            if let Some(ref alias) = join.table.alias {
-                aliases.insert(alias, i);
-            }
-            db.get(&join.table.name)
-                .ok_or_else(|| format!("Table {} not found", join.table.name))
+    let joined_tables = std::iter::once(Ok((table, &sql.table.alias)))
+        .chain(sql.join.iter().map(|join| {
+            Ok((
+                db.get(&join.table.name)
+                    .ok_or_else(|| format!("Table {} not found", join.table.name))?,
+                &join.table.alias,
+            ))
         }))
+        .enumerate()
+        .map(|(i, join)| match join {
+            Ok((table, alias)) => {
+                if let Some(alias) = alias {
+                    aliases.insert(alias, i);
+                }
+                Ok(table)
+            }
+            Err(e) => Err(e),
+        })
         .collect::<Result<Vec<_>, String>>()?;
 
     let ctx = QueryContext {
+        sql,
         tables: joined_tables,
         aliases,
     };
 
+    if let Some(ref order_by) = sql.ordering {
+        let mut buf = BufferOutput(vec![]);
+        let mut subsql = sql.clone();
+        let mut cols = extend_colspecs(&ctx, &sql.cols)?;
+        let col_ref = find_col(&ctx, &order_by.col)
+            .ok_or_else(|| format!("Column {} not found in ORDER BY clause", order_by.col))?;
+        let col_idx = cols.len();
+        cols.push(col_ref);
+        subsql.ordering = None;
+        exec_select_sub(&mut buf, &ctx, &cols)?;
+
+        buf.0.sort_by(move |lhs, rhs| {
+            let res = lhs[col_idx].cmp(&rhs[col_idx]);
+            if order_by.ordering == Ordering::Desc {
+                res.reverse()
+            } else {
+                res
+            }
+        });
+
+        for row in buf.0 {
+            out.output(&row[..row.len() - 1])?;
+        }
+
+        return Ok(());
+    }
+
+    let cols = extend_colspecs(&ctx, &ctx.sql.cols)?;
+
+    exec_select_sub(out, &ctx, &cols)
+}
+
+fn exec_select_sub(
+    out: &mut impl QueryOutput,
+    ctx: &QueryContext,
+    cols: &[ColRef],
+) -> Result<(), Box<dyn Error>> {
     let join_allow_none = std::iter::once(false)
         .chain(
-            sql.join
+            ctx.sql
+                .join
                 .iter()
                 .map(|join| matches!(join.kind, JoinKind::Left)),
         )
         .collect::<Vec<_>>();
-
-    let cols = match &sql.cols {
-        Cols::Wildcard => ctx
-            .tables
-            .iter()
-            .enumerate()
-            .map(|(table_idx, table)| {
-                table
-                    .schema
-                    .iter()
-                    .enumerate()
-                    .map(move |(i, _)| ColRef::new(table, table_idx, i))
-            })
-            .flatten()
-            .collect(),
-        Cols::List(cols) => cols
-            .iter()
-            .map(|col| find_col(&ctx, col).ok_or_else(|| format!("Column \"{}\" not found", col)))
-            .collect::<Result<Vec<_>, String>>()?,
-    };
 
     let row_counts = ctx
         .tables
@@ -277,30 +372,45 @@ pub fn exec_select(
         .collect::<Vec<_>>();
     let mut row_cursor = vec![RowCursor::new(); ctx.tables.len()];
 
+    let has_left_join = join_allow_none.iter().any(|a| *a);
+
     loop {
-        if sql.join.iter().all(|join| {
+        let bi = row_cursor
+            .iter()
+            .zip(join_allow_none.iter())
+            .map(|(r, a)| (r.row.is_none(), *a, !r.shown))
+            .collect::<Vec<_>>();
+        dbg!(&row_cursor, &bi);
+        if ctx.sql.join.iter().all(|join| {
             let val = eval_expr(&join.condition, &ctx.tables, &row_cursor);
             match val {
-                Ok(val) => val == "1" || val.eq_ignore_ascii_case("true"),
+                Ok(val) => coerce_bool(&val),
                 Err(EvalError::CursorNone(table_idx)) => {
-                    join_allow_none[table_idx] && !row_cursor[table_idx].shown
+                    dbg!(join_allow_none[table_idx]) && !row_cursor[table_idx].shown
                 }
                 _ => false,
             }
-        }) && row_cursor.iter().any(|row| row.row.is_some())
+        }) || has_left_join
+            && row_cursor.iter().zip(join_allow_none.iter()).all(|(r, a)| {
+                if *a {
+                    r.row.is_none() && !r.shown
+                } else {
+                    r.row.is_some()
+                }
+            })
         {
             for rc in row_cursor.iter_mut() {
                 rc.shown = true;
             }
-            for col in &cols {
-                let cell = col.get(&row_cursor);
-                if let Some(cell) = cell {
-                    write!(out, "{cell},")?;
-                } else {
-                    write!(out, ",")?;
-                }
-            }
-            writeln!(out, "")?;
+            let values = cols
+                .iter()
+                .map(|c| {
+                    c.get(&row_cursor)
+                        .cloned()
+                        .unwrap_or_else(|| "".to_string())
+                })
+                .collect::<Vec<_>>();
+            out.output(&values)?;
         }
 
         if !incr_row_cursor(&mut row_cursor, &row_counts) {
