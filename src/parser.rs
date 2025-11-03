@@ -257,7 +257,7 @@ fn term(i: &str) -> IResult<&str, Expr> {
         not,
         parentheses,
         str_literal.map(Expr::StrLiteral),
-        column_expr,
+        column_name.map(Expr::Column),
     ))
     .parse(i)?;
     Ok((r, res))
@@ -299,12 +299,12 @@ fn col_wildcard(i: &str) -> IResult<&str, ColSpecifier> {
 }
 
 fn col_spec(i: &str) -> IResult<&str, ColSpecifier> {
-    let (r, res) = column_name(i)?;
-    Ok((r, ColSpecifier::Name(res)))
+    let (r, res) = column_expr(i)?;
+    Ok((r, ColSpecifier::Expr(res)))
 }
 
 fn column_expr(i: &str) -> IResult<&str, Expr> {
-    alt((column_digit, column_name.map(Expr::Column))).parse(i)
+    alt((column_digit, expression)).parse(i)
 }
 
 fn column_digit(i: &str) -> IResult<&str, Expr> {
@@ -354,8 +354,8 @@ mod test {
             statement(src).unwrap().1,
             Statement::Select(SelectStmt {
                 cols: vec![
-                    ColSpecifier::Name(Column::new("id")),
-                    ColSpecifier::Name(Column::new("data"))
+                    ColSpecifier::Expr(Expr::Column(Column::new("id"))),
+                    ColSpecifier::Expr(Expr::Column(Column::new("data")))
                 ],
                 table: TableSpecifier::new("table"),
                 join: vec![],
@@ -388,8 +388,8 @@ mod test {
             statement(src).unwrap().1,
             Statement::Select(SelectStmt {
                 cols: vec![
-                    ColSpecifier::Name(Column::new("id")),
-                    ColSpecifier::Name(Column::new("data"))
+                    ColSpecifier::Expr(Expr::Column(Column::new("id"))),
+                    ColSpecifier::Expr(Expr::Column(Column::new("data")))
                 ],
                 table: TableSpecifier::new("table"),
                 join: vec![JoinClause {
@@ -426,8 +426,8 @@ mod test {
             statement(src).unwrap().1,
             Statement::Select(SelectStmt {
                 cols: vec![
-                    ColSpecifier::Name(Column::new("id")),
-                    ColSpecifier::Name(Column::new("data"))
+                    ColSpecifier::Expr(Expr::Column(Column::new("id"))),
+                    ColSpecifier::Expr(Expr::Column(Column::new("data")))
                 ],
                 table: TableSpecifier::new("table"),
                 join: vec![],
@@ -450,8 +450,8 @@ mod test {
             statement(src).unwrap().1,
             Statement::Select(SelectStmt {
                 cols: vec![
-                    ColSpecifier::Name(Column::new("id")),
-                    ColSpecifier::Name(Column::new("data"))
+                    ColSpecifier::Expr(Expr::Column(Column::new("id"))),
+                    ColSpecifier::Expr(Expr::Column(Column::new("data")))
                 ],
                 table: TableSpecifier::new("table"),
                 join: vec![],

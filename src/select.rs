@@ -23,7 +23,7 @@ pub struct TableSpecifier {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ColSpecifier {
     Wildcard,
-    Name(Column),
+    Expr(Expr),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -63,9 +63,32 @@ pub enum BinOp {
     Or,
 }
 
+impl std::fmt::Display for BinOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Eq => f.write_str("="),
+            Self::Ne => f.write_str("<>"),
+            Self::Lt => f.write_str("<"),
+            Self::Gt => f.write_str(">"),
+            Self::Le => f.write_str("<="),
+            Self::Ge => f.write_str(">="),
+            Self::And => f.write_str("AND"),
+            Self::Or => f.write_str("OR"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UniOp {
     Not,
+}
+
+impl std::fmt::Display for UniOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Not => f.write_str("NOT"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +105,22 @@ pub enum Expr {
         op: UniOp,
         operand: Box<Expr>,
     },
+}
+
+impl std::fmt::Display for Expr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Column(col) => f.write_str(&col.column),
+            Self::ColIdx(idx) => write!(f, "{idx}"),
+            Self::StrLiteral(lit) => write!(f, "'{lit}'"),
+            Self::Binary { op, lhs, rhs } => {
+                write!(f, "({lhs} {op} {rhs})")
+            }
+            Self::Unary { op, operand } => {
+                write!(f, "{op} {operand}")
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,9 +246,9 @@ fn extend_colspecs<'a>(
                     }
                 }
             }
-            ColSpecifier::Name(col) => {
-                exprs.push(Expr::Column(col.clone()));
-                header.push(col.column.clone());
+            ColSpecifier::Expr(expr) => {
+                exprs.push(expr.clone());
+                header.push(expr.to_string());
             }
         }
     }
