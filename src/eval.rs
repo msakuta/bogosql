@@ -1,7 +1,4 @@
-use crate::{
-    Table,
-    select::{BinOp, Expr, RowCursor, UniOp},
-};
+use crate::select::{BinOp, Expr, QueryContext, RowCursor, UniOp};
 
 #[derive(Clone, Debug)]
 pub(crate) enum EvalError {
@@ -24,64 +21,30 @@ impl std::error::Error for EvalError {}
 
 pub(crate) fn eval_expr(
     expr: &Expr,
-    tables: &[&Table],
+    cols: &[Expr],
+    ctx: &QueryContext,
     row_cursor: &[RowCursor],
 ) -> Result<String, EvalError> {
     match expr {
         Expr::Column(col) => {
-            if let Some((table_idx, table)) = col.table.as_ref().and_then(|table_name| {
-                tables
-                    .iter()
-                    .enumerate()
-                    .find(|(_, t)| t.name == *table_name)
-            }) {
-                let row = row_cursor[table_idx]
-                    .row
-                    .ok_or_else(|| EvalError::CursorNone(table_idx))?;
-
-                table
-                    .schema
-                    .iter()
-                    .enumerate()
-                    .find_map(|(i, c)| {
-                        if c.name == col.column {
-                            Some(
-                                table
-                                    .get(row, i)
-                                    .cloned()
-                                    .ok_or_else(|| EvalError::RowNotFound(i)),
-                            )
-                        } else {
-                            None
-                        }
-                    })
-                    .ok_or_else(|| EvalError::ColNotFound(col.column.clone()))?
-            } else {
-                tables
-                    .iter()
-                    .enumerate()
-                    .find_map(|(table_idx, t)| {
-                        t.schema.iter().enumerate().find_map(|(i, c)| {
-                            if c.name == col.column {
-                                Some(
-                                    row_cursor[table_idx]
-                                        .row
-                                        .and_then(|r| t.get(r, i))
-                                        .cloned()
-                                        .ok_or_else(|| EvalError::RowNotFound(i)),
-                                )
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                    .ok_or_else(|| EvalError::ColNotFound(col.column.clone()))?
-            }
+            let col = ctx
+                .find_col(col)
+                .ok_or_else(|| EvalError::ColNotFound(col.column.clone()))?;
+            col.get(&row_cursor).cloned()
+        }
+        Expr::ColIdx(i) => {
+            let col = cols
+                .get(
+                    i.checked_sub(1)
+                        .ok_or_else(|| EvalError::ColNotFound(format!("{i}")))?,
+                )
+                .ok_or_else(|| EvalError::ColNotFound(format!("{i}")))?;
+            eval_expr(col, cols, ctx, row_cursor)
         }
         Expr::StrLiteral(lit) => Ok(lit.clone()),
         Expr::Binary { op, lhs, rhs } => {
-            let lhs = eval_expr(lhs, tables, row_cursor)?;
-            let rhs = eval_expr(rhs, tables, row_cursor)?;
+            let lhs = eval_expr(lhs, cols, ctx, row_cursor)?;
+            let rhs = eval_expr(rhs, cols, ctx, row_cursor)?;
             let res = match op {
                 BinOp::Eq => lhs == rhs,
                 BinOp::Ne => lhs != rhs,
@@ -95,7 +58,7 @@ pub(crate) fn eval_expr(
             Ok((if res { "1" } else { "0" }).to_string())
         }
         Expr::Unary { op, operand } => {
-            let val = eval_expr(operand, tables, row_cursor)?;
+            let val = eval_expr(operand, cols, ctx, row_cursor)?;
             let res = match op {
                 UniOp::Not => !coerce_bool(&val),
             };

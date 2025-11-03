@@ -2,7 +2,7 @@ use nom::{
     IResult, Parser,
     branch::alt,
     bytes::complete::{tag, tag_no_case},
-    character::complete::{alpha1, alphanumeric1, multispace0, multispace1, none_of},
+    character::complete::{alpha1, alphanumeric1, digit1, multispace0, multispace1, none_of},
     combinator::{opt, recognize},
     multi::{fold_many0, many0, separated_list0},
     sequence::{delimited, pair, terminated},
@@ -127,7 +127,7 @@ fn order_by(i: &str) -> IResult<&str, OrderBy> {
     )
         .parse(i)?;
 
-    let (r, col) = column(r)?;
+    let (r, expr) = column_expr(r)?;
 
     let (r, ordering) = opt(delimited(
         multispace0,
@@ -139,7 +139,7 @@ fn order_by(i: &str) -> IResult<&str, OrderBy> {
     Ok((
         r,
         OrderBy {
-            col,
+            expr,
             ordering: ordering.map_or(Ordering::Asc, |o| {
                 if o.eq_ignore_ascii_case("ASC") {
                     Ordering::Asc
@@ -253,26 +253,14 @@ fn not(i: &str) -> IResult<&str, Expr> {
 }
 
 fn term(i: &str) -> IResult<&str, Expr> {
-    if let Ok((r, res)) = not(i) {
-        return Ok((r, res));
-    }
-
-    if let Ok((r, res)) = parentheses(i) {
-        return Ok((r, res));
-    }
-
-    if let Ok((r, lit)) = str_literal(i) {
-        return Ok((r, Expr::StrLiteral(lit)));
-    }
-
-    if let Ok((r, col)) = column(i) {
-        return Ok((r, Expr::Column(col)));
-    }
-
-    Err(nom::Err::Error(nom::error::Error::new(
-        i,
-        nom::error::ErrorKind::Verify,
-    )))
+    let (r, res) = alt((
+        not,
+        parentheses,
+        str_literal.map(Expr::StrLiteral),
+        column_expr,
+    ))
+    .parse(i)?;
+    Ok((r, res))
 }
 
 fn parentheses(i: &str) -> IResult<&str, Expr> {
@@ -311,11 +299,23 @@ fn col_wildcard(i: &str) -> IResult<&str, ColSpecifier> {
 }
 
 fn col_spec(i: &str) -> IResult<&str, ColSpecifier> {
-    let (r, res) = column(i)?;
+    let (r, res) = column_name(i)?;
     Ok((r, ColSpecifier::Name(res)))
 }
 
-fn column(i: &str) -> IResult<&str, Column> {
+fn column_expr(i: &str) -> IResult<&str, Expr> {
+    alt((column_digit, column_name.map(Expr::Column))).parse(i)
+}
+
+fn column_digit(i: &str) -> IResult<&str, Expr> {
+    let (r, s) = digit1(i)?;
+    let col_idx = s
+        .parse()
+        .map_err(|_| nom::Err::Failure(nom::error::Error::new(r, nom::error::ErrorKind::Verify)))?;
+    Ok((r, Expr::ColIdx(col_idx)))
+}
+
+fn column_name(i: &str) -> IResult<&str, Column> {
     let (r, table) = opt(terminated(
         ident,
         delimited(multispace0, tag("."), multispace0),
@@ -433,10 +433,10 @@ mod test {
                 join: vec![],
                 condition: None,
                 ordering: Some(OrderBy {
-                    col: Column {
+                    expr: Expr::Column(Column {
                         table: None,
                         column: "id".to_string(),
-                    },
+                    }),
                     ordering: Ordering::Asc,
                 }),
             })
@@ -457,10 +457,10 @@ mod test {
                 join: vec![],
                 condition: Some(Expr::StrLiteral("1".to_string())),
                 ordering: Some(OrderBy {
-                    col: Column {
+                    expr: Expr::Column(Column {
                         table: None,
                         column: "id".to_string(),
-                    },
+                    }),
                     ordering: Ordering::Asc,
                 }),
             })

@@ -41,7 +41,7 @@ pub enum JoinKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OrderBy {
-    pub col: Column,
+    pub expr: Expr,
     pub ordering: Ordering,
 }
 
@@ -71,6 +71,7 @@ pub enum UniOp {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
     Column(Column),
+    ColIdx(usize),
     StrLiteral(String),
     Binary {
         op: BinOp,
@@ -110,15 +111,15 @@ impl std::fmt::Display for Column {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ColRef<'a> {
+pub(crate) struct ColRef<'a> {
     table: &'a Table,
     /// If the query has joins, this index is incremented for each join.
-    joindex: usize,
+    pub joindex: usize,
     col: usize,
 }
 
 impl<'a> ColRef<'a> {
-    fn new(table: &'a Table, joindex: usize, col: usize) -> Self {
+    pub fn new(table: &'a Table, joindex: usize, col: usize) -> Self {
         Self {
             table,
             joindex,
@@ -126,82 +127,86 @@ impl<'a> ColRef<'a> {
         }
     }
 
-    fn get(&self, row_indices: &[RowCursor]) -> Option<&String> {
-        row_indices
+    pub fn get(&self, row_indices: &[RowCursor]) -> Result<&String, EvalError> {
+        let row = row_indices
             .get(self.joindex)
-            .and_then(|row| row.row)
-            .and_then(|row| self.table.get(row, self.col))
+            .ok_or_else(|| EvalError::ColNotFound(self.joindex.to_string()))?
+            .row
+            .ok_or_else(|| EvalError::CursorNone(self.joindex))?;
+        self.table
+            .get(row, self.col)
+            .ok_or_else(|| EvalError::RowNotFound(row))
     }
 }
 
-struct QueryContext<'a> {
+pub(crate) struct QueryContext<'a> {
     sql: &'a SelectStmt,
     tables: Vec<&'a Table>,
     aliases: HashMap<&'a String, usize>,
 }
 
-fn find_col<'a>(ctx: &QueryContext<'a>, column: &Column) -> Option<ColRef<'a>> {
-    if let Some(ref table_name) = column.table {
-        let (joindex, table) = ctx
-            .aliases
-            .get(table_name)
-            .and_then(|i| Some((*i, *ctx.tables.get(*i)?)))
-            .or_else(|| {
-                ctx.tables
-                    .iter()
-                    .enumerate()
-                    .find(|(_, t)| t.name == *table_name)
-                    .map(|(i, t)| (i, *t))
-            })?;
-        return table
-            .schema
-            .iter()
-            .enumerate()
-            .find(|(_, s)| s.name == column.column)
-            .map(|(i, _)| ColRef::new(table, joindex, i));
-    }
-    ctx.tables
-        .iter()
-        .enumerate()
-        .fold(None, |mut acc, (joindex, table)| {
-            let candidate = table
+impl<'a> QueryContext<'a> {
+    pub fn find_col(&self, column: &Column) -> Option<ColRef<'a>> {
+        if let Some(ref table_name) = column.table {
+            let (joindex, table) = self
+                .aliases
+                .get(table_name)
+                .and_then(|i| Some((*i, *self.tables.get(*i)?)))
+                .or_else(|| {
+                    self.tables
+                        .iter()
+                        .enumerate()
+                        .find(|(_, t)| t.name == *table_name)
+                        .map(|(i, t)| (i, *t))
+                })?;
+            return table
                 .schema
                 .iter()
                 .enumerate()
                 .find(|(_, s)| s.name == column.column)
                 .map(|(i, _)| ColRef::new(table, joindex, i));
-            if candidate.is_some() {
-                if acc.is_some() {
-                    panic!("Column name {}", column.column);
-                } else {
-                    acc = candidate;
+        }
+        self.tables
+            .iter()
+            .enumerate()
+            .fold(None, |mut acc, (joindex, table)| {
+                let candidate = table
+                    .schema
+                    .iter()
+                    .enumerate()
+                    .find(|(_, s)| s.name == column.column)
+                    .map(|(i, _)| ColRef::new(table, joindex, i));
+                if candidate.is_some() {
+                    if acc.is_some() {
+                        panic!("Column name {}", column.column);
+                    } else {
+                        acc = candidate;
+                    }
                 }
-            }
-            acc
-        })
+                acc
+            })
+    }
 }
 
 fn extend_colspecs<'a>(
     ctx: &'a QueryContext<'a>,
     colspecs: &'a [ColSpecifier],
-) -> Result<Vec<ColRef<'a>>, Box<dyn Error>> {
+) -> Result<Vec<Expr>, Box<dyn Error>> {
     let mut ret = vec![];
     for col_spec in colspecs {
         match col_spec {
             ColSpecifier::Wildcard => {
-                for (i, table) in ctx.tables.iter().enumerate() {
-                    for (j, _col) in table.schema.iter().enumerate() {
-                        ret.push(ColRef {
-                            table: *table,
-                            joindex: i,
-                            col: j,
-                        });
+                for (_i, table) in ctx.tables.iter().enumerate() {
+                    for (_j, col) in table.schema.iter().enumerate() {
+                        ret.push(Expr::Column(Column {
+                            table: Some(table.name.clone()),
+                            column: col.name.to_string(),
+                        }));
                     }
                 }
             }
             ColSpecifier::Name(col) => {
-                let col = find_col(ctx, col).ok_or_else(|| format!("Column {} not found", col))?;
-                ret.push(col);
+                ret.push(Expr::Column(col.clone()));
             }
         }
     }
@@ -323,10 +328,8 @@ pub fn exec_select(
         let mut buf = BufferOutput(vec![]);
         let mut subsql = sql.clone();
         let mut cols = extend_colspecs(&ctx, &sql.cols)?;
-        let col_ref = find_col(&ctx, &order_by.col)
-            .ok_or_else(|| format!("Column {} not found in ORDER BY clause", order_by.col))?;
         let col_idx = cols.len();
-        cols.push(col_ref);
+        cols.push(order_by.expr.clone());
         subsql.ordering = None;
         exec_select_sub(&mut buf, &ctx, &cols)?;
 
@@ -354,7 +357,7 @@ pub fn exec_select(
 fn exec_select_sub(
     out: &mut impl QueryOutput,
     ctx: &QueryContext,
-    cols: &[ColRef],
+    cols: &[Expr],
 ) -> Result<(), Box<dyn Error>> {
     let join_allow_none = std::iter::once(false)
         .chain(
@@ -375,18 +378,12 @@ fn exec_select_sub(
     let has_left_join = join_allow_none.iter().any(|a| *a);
 
     loop {
-        let bi = row_cursor
-            .iter()
-            .zip(join_allow_none.iter())
-            .map(|(r, a)| (r.row.is_none(), *a, !r.shown))
-            .collect::<Vec<_>>();
-        dbg!(&row_cursor, &bi);
         if ctx.sql.join.iter().all(|join| {
-            let val = eval_expr(&join.condition, &ctx.tables, &row_cursor);
+            let val = eval_expr(&join.condition, &cols, ctx, &row_cursor);
             match val {
                 Ok(val) => coerce_bool(&val),
                 Err(EvalError::CursorNone(table_idx)) => {
-                    dbg!(join_allow_none[table_idx]) && !row_cursor[table_idx].shown
+                    join_allow_none[table_idx] && !row_cursor[table_idx].shown
                 }
                 _ => false,
             }
@@ -404,12 +401,13 @@ fn exec_select_sub(
             }
             let values = cols
                 .iter()
-                .map(|c| {
-                    c.get(&row_cursor)
-                        .cloned()
-                        .unwrap_or_else(|| "".to_string())
+                .map(|ex| match eval_expr(ex, cols, ctx, &row_cursor) {
+                    Ok(res) => Ok(res),
+                    Err(EvalError::CursorNone(_)) => Ok("".to_string()),
+                    Err(e) => Err(e),
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>, _>>()
+                .inspect_err(|e| println!("Cell eval error: {e}"))?;
             out.output(&values)?;
         }
 
