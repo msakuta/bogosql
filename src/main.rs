@@ -2,6 +2,7 @@ mod csv;
 mod eval;
 mod parser;
 mod select;
+mod table;
 
 use std::{collections::HashMap, error::Error, fs::read_dir};
 
@@ -12,6 +13,7 @@ use clap::Parser;
 use crate::{
     parser::statement,
     select::{CsvOutput, SelectStmt, exec_select, format_select},
+    table::{Table, make_table},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -21,54 +23,6 @@ enum Statement {
 
 type Database = HashMap<String, Table>;
 
-#[derive(Debug, PartialEq)]
-struct Table {
-    name: String,
-    schema: Vec<RowSchema>,
-    data: Vec<String>,
-}
-
-impl Table {
-    fn get(&self, row: usize, col: usize) -> Option<&String> {
-        let cols = self.schema.len();
-        self.data.get(col + row * cols)
-    }
-}
-
-#[derive(Debug, PartialEq)]
-struct RowSchema {
-    name: String,
-}
-
-fn make_table(name: &str, csv: &str) -> Result<Table, Box<dyn Error>> {
-    let csv = crate::csv::parse_csv(&csv)?;
-    let schema = csv
-        .first()
-        .ok_or_else(|| "CSV needs at least 1 line for the header".to_string())?
-        .iter()
-        .map(|r| RowSchema {
-            name: r.trim().to_string(),
-        })
-        .collect::<Vec<_>>();
-    let mut data = vec![];
-    for record in &csv[1..] {
-        if record.len() == 0 {
-            continue;
-        }
-        if record.len() != schema.len() {
-            return Err("CSV needs the same number of columns as the header".into());
-        }
-        for cell in record {
-            data.push(cell.trim().to_string());
-        }
-    }
-    Ok(Table {
-        name: name.to_string(),
-        schema,
-        data,
-    })
-}
-
 #[derive(Parser)]
 struct Args {
     #[clap(default_value = "SELECT * FROM phonebook", help = "SQL string")]
@@ -77,7 +31,7 @@ struct Args {
     output_csv: bool,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
     let mut db = HashMap::new();
