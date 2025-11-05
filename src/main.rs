@@ -7,6 +7,8 @@ use std::{collections::HashMap, error::Error, fs::read_dir};
 
 use nom::Finish;
 
+use clap::Parser;
+
 use crate::{
     parser::statement,
     select::{CsvOutput, SelectStmt, exec_select, format_select},
@@ -67,7 +69,17 @@ fn make_table(name: &str, csv: &str) -> Result<Table, Box<dyn Error>> {
     })
 }
 
+#[derive(Parser)]
+struct Args {
+    #[clap(default_value = "SELECT * FROM phonebook", help = "SQL string")]
+    query: String,
+    #[clap(short, long, default_value = "false", help = "Format output in CSV")]
+    output_csv: bool,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args = Args::parse();
+
     let mut db = HashMap::new();
 
     for entry in read_dir("data")? {
@@ -91,16 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let mut src = "SELECT id, data FROM phonebook".to_string();
-    let mut csv = false;
-    for s in std::env::args() {
-        match s.as_str() {
-            "-c" => csv = true,
-            _ => src = s,
-        }
-    }
-
-    let (rest, stmt) = statement(&src).finish().unwrap();
+    let (rest, stmt) = statement(&args.query).finish().unwrap();
 
     if rest != "" {
         return Err(format!("SQL has not finished: extra string: \"{rest}\"").into());
@@ -108,7 +111,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match stmt {
         Statement::Select(ref rows) => {
-            if csv {
+            if args.output_csv {
                 let mut buf = CsvOutput(vec![]);
                 let _ = exec_select(&mut buf, &db, rows)?;
                 let out = String::from_utf8(buf.0)?;
