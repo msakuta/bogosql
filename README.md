@@ -82,7 +82,7 @@ Increasingly difficult TODOs
 * [x] LEFT JOIN
 * [x] Aliases (`AS`)
 * [x] Ordering (`ORDER BY col`)
-* [ ] LIMIT, OFFSET
+* [x] LIMIT, OFFSET (screw Oracle DB)
 * [ ] DISTINCT
 * [ ] Expressions
   * [ ] Arithmetic: `+`, `-`, `*`, `/`

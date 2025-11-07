@@ -12,6 +12,8 @@ pub struct SelectStmt {
     pub join: Vec<JoinClause>,
     pub condition: Option<Expr>,
     pub ordering: Option<OrderBy>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -178,6 +180,7 @@ impl<'a> ColRef<'a> {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct QueryContext<'a> {
     sql: &'a SelectStmt,
     tables: Vec<&'a Table>,
@@ -426,7 +429,13 @@ pub fn exec_select(
         let col_idx = cols.len();
         cols.push(order_by.expr.clone());
         subsql.ordering = None;
-        exec_select_sub(&mut buf, &ctx, &cols)?;
+        subsql.limit = None;
+        subsql.offset = None;
+        let subctx = QueryContext {
+            sql: &subsql,
+            ..ctx.clone()
+        };
+        exec_select_sub(&mut buf, &subctx, &cols)?;
 
         buf.0.sort_by(move |lhs, rhs| {
             let res = lhs[col_idx].cmp(&rhs[col_idx]);
@@ -437,8 +446,15 @@ pub fn exec_select(
             }
         });
 
-        for row in buf.0 {
-            out.output(&row[..row.len() - 1])?;
+        if let Some(limit) = sql.limit {
+            let offset = sql.offset.unwrap_or(0);
+            for row in buf.0.iter().skip(offset).take(limit) {
+                out.output(&row[..row.len() - 1])?;
+            }
+        } else {
+            for row in buf.0 {
+                out.output(&row[..row.len() - 1])?;
+            }
         }
 
         return Ok(());
@@ -508,7 +524,14 @@ fn exec_select_sub(
         Ok(res)
     };
 
+    let offset = ctx.sql.offset.unwrap_or(0);
+    let mut printed_rows = 0;
     loop {
+        if let Some(limit) = ctx.sql.limit
+            && offset + limit <= printed_rows
+        {
+            break;
+        }
         if check_print(&row_cursor)? {
             for rc in row_cursor.iter_mut() {
                 rc.shown = true;
@@ -522,7 +545,10 @@ fn exec_select_sub(
                 })
                 .collect::<Result<Vec<_>, _>>()
                 .inspect_err(|e| println!("Cell eval error: {e}"))?;
-            out.output(&values)?;
+            if offset <= printed_rows {
+                out.output(&values)?;
+            }
+            printed_rows += 1;
         }
 
         if !incr_row_cursor(&mut row_cursor, &row_counts) {

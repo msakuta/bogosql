@@ -42,6 +42,10 @@ pub fn statement(i: &str) -> IResult<&str, Statement> {
 
             let (r, ordering) = opt(order_by).parse(r)?;
 
+            let (r, limit) = opt(limit).parse(r)?;
+
+            let (r, offset) = opt(offset).parse(r)?;
+
             (
                 r,
                 Statement::Select(crate::SelectStmt {
@@ -50,6 +54,8 @@ pub fn statement(i: &str) -> IResult<&str, Statement> {
                     join,
                     condition,
                     ordering,
+                    limit,
+                    offset,
                 }),
             )
         }
@@ -149,6 +155,24 @@ fn order_by(i: &str) -> IResult<&str, OrderBy> {
             }),
         },
     ))
+}
+
+fn limit(i: &str) -> IResult<&str, usize> {
+    let (r, _) = delimited(multispace0, tag_no_case("LIMIT"), multispace1).parse(i)?;
+    let (r, limit) = digit1(r)?;
+    let limit = limit
+        .parse()
+        .map_err(|_| nom::Err::Failure(nom::error::Error::new(r, nom::error::ErrorKind::Verify)))?;
+    Ok((r, limit))
+}
+
+fn offset(i: &str) -> IResult<&str, usize> {
+    let (r, _) = delimited(multispace0, tag_no_case("OFFSET"), multispace1).parse(i)?;
+    let (r, offset) = digit1(r)?;
+    let offset = offset
+        .parse()
+        .map_err(|_| nom::Err::Failure(nom::error::Error::new(r, nom::error::ErrorKind::Verify)))?;
+    Ok((r, offset))
 }
 
 fn where_clause(i: &str) -> IResult<&str, Expr> {
