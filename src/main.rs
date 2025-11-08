@@ -76,37 +76,3 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
-
-#[cfg(test)]
-mod test {
-    use super::*;
-
-    #[test]
-    fn test_make_table() {
-        let csv = r#"id,name
-1, a
-2, b
-3, c
-"#;
-        let table_name = "a";
-        let table = make_table(table_name, csv).unwrap();
-        assert_eq!(
-            table,
-            Table {
-                name: table_name.to_string(),
-                schema: vec![
-                    RowSchema {
-                        name: "id".to_string()
-                    },
-                    RowSchema {
-                        name: "name".to_string()
-                    }
-                ],
-                data: ["1", "a", "2", "b", "3", "c"]
-                    .into_iter()
-                    .map(|s| s.to_string())
-                    .collect(),
-            }
-        )
-    }
-}

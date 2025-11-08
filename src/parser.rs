@@ -385,6 +385,8 @@ mod test {
                 join: vec![],
                 condition: None,
                 ordering: None,
+                limit: None,
+                offset: None,
             })
         );
     }
@@ -400,6 +402,8 @@ mod test {
                 join: vec![],
                 condition: None,
                 ordering: None,
+                limit: None,
+                offset: None,
             })
         );
     }
@@ -427,6 +431,8 @@ mod test {
                 }],
                 condition: None,
                 ordering: None,
+                limit: None,
+                offset: None,
             })
         );
     }
@@ -463,6 +469,8 @@ mod test {
                     }),
                     ordering: Ordering::Asc,
                 }),
+                limit: None,
+                offset: None,
             })
         );
     }
@@ -487,6 +495,8 @@ mod test {
                     }),
                     ordering: Ordering::Asc,
                 }),
+                limit: None,
+                offset: None,
             })
         );
     }
