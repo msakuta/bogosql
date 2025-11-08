@@ -96,3 +96,15 @@ Increasingly difficult TODOs
 * [ ] Subqueries
 * [ ] Set operators (`UNION`, `UNION ALL`, `INTERSECT`, `EXCEPT`, `MINUS`)
 * [ ] DML
+
+## How to build wasm version
+
+I tried very hard to run rollup to bundle Rust-produced Wasm files, because I wanted to use Svelte for tables, and rollup is the default choice of the bunder for Svelte, but it was too difficult that I gave up.
+Neither [rollup-wasm]() nor [@wasm-tool/rollup-plugin-rust](https://github.com/wasm-tool/rollup-plugin-rust) worked.
+
+* Make sure to install wasm-pack
+* `cd wasm`
+* `wasm-pack build --target web --out-dir public/pkg`
+* Make sure to install npm & node
+* `npx serve`
+* Browse `http://localhost:3000`

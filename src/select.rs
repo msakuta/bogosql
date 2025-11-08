@@ -1,7 +1,8 @@
 use std::{collections::HashMap, error::Error, io::Write};
 
 use crate::{
-    Database, Table,
+    Table,
+    db::Database,
     eval::{EvalError, coerce_bool, eval_expr},
 };
 

@@ -9,7 +9,7 @@ use nom::{
 };
 
 use crate::{
-    Statement,
+    db::Statement,
     select::{
         BinOp, ColSpecifier, Column, Expr, JoinClause, JoinKind, OrderBy, Ordering, TableSpecifier,
         UniOp,

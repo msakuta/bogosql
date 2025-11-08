@@ -1,4 +1,5 @@
 mod csv;
+mod db;
 mod eval;
 mod parser;
 mod select;
@@ -11,17 +12,11 @@ use nom::Finish;
 use clap::Parser;
 
 use crate::{
+    db::Statement,
     parser::statement,
     select::{CsvOutput, SelectStmt, exec_select, format_select},
     table::{Table, make_table},
 };
-
-#[derive(Debug, Clone, PartialEq)]
-enum Statement {
-    Select(SelectStmt),
-}
-
-type Database = HashMap<String, Table>;
 
 #[derive(Parser)]
 struct Args {

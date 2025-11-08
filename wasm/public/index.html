@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset='utf-8'>
+    <meta name='viewport' content='width=device-width,initial-scale=1'>
+
+    <title>bogosql on the web</title>
+
+    <!-- <link rel='stylesheet' href='/build/bundle.css'> -->
+
+    <!-- <script defer src='/build/bundle.js'></script> -->
+    <script type="module" src='./main.js'></script>
+    <style>
+        .paneTitle {
+            background-color: #afffff;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>BogoSQL web interface</h1>
+    <div>
+        <textarea id="query" rows="3" cols="100" placeholder="Enter a text...">SELECT * FROM phonebook</textarea>
+    </div>
+    <button id="runQuery">Run query</button>
+
+    <div>Result:</div>
+    <div>
+        <textarea id="result" rows="30" cols="100" readonly></textarea>
+    </div>
+</body>
+
+</html>
