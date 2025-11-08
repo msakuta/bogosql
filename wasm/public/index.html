@@ -27,12 +27,13 @@
     </style>
 </head>
 
-<body>
+<div>
     <h1>BogoSQL Wasm playground</h1>
     <p class="text">
         The query runs on browser's local database. It does not send a SQL to any real SQL server. Check by F12.
     </p>
-    <div>Query:</div>
+    <div>Tables: <span id="examples"></span></div>
+    <div>Query: </div>
     <div>
         <textarea id="query" rows="3" cols="100" placeholder="Enter a text...">SELECT * FROM phonebook</textarea>
     </div>

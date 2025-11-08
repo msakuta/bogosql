@@ -1,6 +1,20 @@
-import init, { run_query } from "./pkg/bogosql_wasm.js";
+import init, { run_query, list_table } from "./pkg/bogosql_wasm.js";
 
-init();
+init().then(() => {
+    const tables = list_table();
+    for (let table of tables) {
+        const examples = document.getElementById("examples");
+        const link = document.createElement("a");
+        link.href = "#";
+        link.innerHTML = table;
+        link.addEventListener("click", () => {
+            const query = document.getElementById("query");
+            query.value = `SELECT * FROM ${table}`;
+        })
+        examples.appendChild(link);
+        examples.appendChild(document.createTextNode(" "));
+    }
+});
 
 function onQuery() {
     const query = document.getElementById("query");
