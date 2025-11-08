@@ -102,7 +102,8 @@ Increasingly difficult TODOs
 ## How to build wasm version
 
 I tried very hard to run rollup to bundle Rust-produced Wasm files, because I wanted to use Svelte for tables, and rollup is the default choice of the bunder for Svelte, but it was too difficult that I gave up.
-Neither [rollup-wasm]() nor [@wasm-tool/rollup-plugin-rust](https://github.com/wasm-tool/rollup-plugin-rust) worked.
+Neither [@rollup/plugin-wasm](https://github.com/rollup/plugins/tree/master/packages/wasm) nor [@wasm-tool/rollup-plugin-rust](https://github.com/wasm-tool/rollup-plugin-rust) worked.
+I did not want to use Webpack, so I just wrote plain HTML.
 
 * Make sure to install wasm-pack
 * `cd wasm`
