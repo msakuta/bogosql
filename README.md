@@ -2,6 +2,8 @@
 
 A toy reinvention of SQL server in Rust
 
+Try it now on your browser! https://msakuta.github.io/bogosql/
+
 I am interested in the SQL syntax, because it is so ambiguous that I always get lost in a complex one.
 Implementing a parser (and preferably executor) is the best way to understand a syntax, so let's do it.
 
