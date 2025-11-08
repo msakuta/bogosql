@@ -25,7 +25,8 @@ jobs:
       with:
         node-version: 10.x
     - name: Build
-      run: cd wasm && wasm-pack build --target web --out-dir public/pkg
+      # Ignore the gitignore!
+      run: cd wasm && wasm-pack build --target web --out-dir public/pkg && rm public/pkg/.gitignore
     - name: Deploy
       uses: peaceiris/actions-gh-pages@v3
       with:
