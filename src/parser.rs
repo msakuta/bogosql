@@ -280,6 +280,7 @@ fn term(i: &str) -> IResult<&str, Expr> {
     let (r, res) = alt((
         not,
         parentheses,
+        fn_invoke,
         str_literal.map(Expr::StrLiteral),
         column_name.map(Expr::Column),
     ))
@@ -296,12 +297,23 @@ fn parentheses(i: &str) -> IResult<&str, Expr> {
 
 fn str_literal(i: &str) -> IResult<&str, String> {
     let (r, _) = pair(multispace0, tag("'")).parse(i)?;
-
     let (r, s) = recognize(many0(none_of("'"))).parse(r)?;
-
     let (r, _) = tag("'").parse(r)?;
-
     Ok((r, s.to_string()))
+}
+
+fn fn_invoke(i: &str) -> IResult<&str, Expr> {
+    let (r, name) = delimited(multispace0, ident, multispace0).parse(i)?;
+    let (r, _) = delimited(multispace0, tag("("), multispace0).parse(r)?;
+    let (r, ex) = expression(r)?;
+    let (r, _) = delimited(multispace0, tag(")"), multispace0).parse(r)?;
+    Ok((
+        r,
+        Expr::AggregateFn {
+            name,
+            args: vec![ex],
+        },
+    ))
 }
 
 fn ident(i: &str) -> IResult<&str, String> {

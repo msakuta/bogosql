@@ -3,7 +3,7 @@ use std::{collections::HashMap, error::Error, io::Write};
 use crate::{
     Table,
     db::Database,
-    eval::{EvalError, coerce_bool, eval_expr},
+    eval::{EvalError, aggregate_expr, coerce_bool, eval_expr, find_aggregate_fn},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -108,6 +108,10 @@ pub enum Expr {
         op: UniOp,
         operand: Box<Expr>,
     },
+    AggregateFn {
+        name: String,
+        args: Vec<Expr>,
+    },
 }
 
 impl std::fmt::Display for Expr {
@@ -121,6 +125,17 @@ impl std::fmt::Display for Expr {
             }
             Self::Unary { op, operand } => {
                 write!(f, "{op} {operand}")
+            }
+            Self::AggregateFn { name, args } => {
+                write!(f, "{name}(")?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i != 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{arg}")?;
+                }
+                write!(f, ")")?;
+                Ok(())
             }
         }
     }
@@ -524,6 +539,22 @@ fn exec_select_sub(
                 })?;
         Ok(res)
     };
+
+    if let Some(_addr) = cols.iter().find_map(|col| find_aggregate_fn(col, ctx)) {
+        let mut res: Vec<_> = cols.iter().map(|_| 0.).collect();
+        loop {
+            for (col, result) in cols.iter().zip(res.iter_mut()) {
+                let _ = aggregate_expr(col, cols, ctx, &row_cursor, result)?;
+            }
+            if !incr_row_cursor(&mut row_cursor, &row_counts)
+                || row_cursor.iter().any(|c| c.row.is_none())
+            {
+                break;
+            }
+        }
+        out.output(&res.iter().map(|v| v.to_string()).collect::<Vec<_>>())?;
+        return Ok(());
+    }
 
     let offset = ctx.sql.offset.unwrap_or(0);
     let mut printed_rows = 0;
