@@ -544,7 +544,9 @@ fn exec_select_sub(
         let mut res: Vec<_> = cols.iter().map(|_| 0.).collect();
         loop {
             for (col, result) in cols.iter().zip(res.iter_mut()) {
-                let _ = aggregate_expr(col, cols, ctx, &row_cursor, result)?;
+                if check_print(&row_cursor)? {
+                    let _ = aggregate_expr(col, cols, ctx, &row_cursor, result)?;
+                }
             }
             if !incr_row_cursor(&mut row_cursor, &row_counts)
                 || row_cursor.iter().any(|c| c.row.is_none())

@@ -7,6 +7,8 @@ pub(crate) enum EvalError {
     CursorNone(usize),
     /// When an aggregate function like count is called in scalar context
     AggregateCall(String),
+    /// When a type coercion fails from the first type to the second
+    Coerce(String, String),
 }
 
 impl std::fmt::Display for EvalError {
@@ -18,6 +20,7 @@ impl std::fmt::Display for EvalError {
             Self::AggregateCall(name) => {
                 write!(f, "Aggregate function {name} is called in scalar context")
             }
+            Self::Coerce(from, to) => write!(f, "Coercion from {from} to {to}"),
         }
     }
 }
@@ -115,9 +118,16 @@ pub(crate) fn aggregate_expr(
             };
             Ok((if res { "1" } else { "0" }).to_string())
         }
-        Expr::AggregateFn { name, .. } => match name.to_ascii_lowercase().as_str() {
+        Expr::AggregateFn { name, args } => match name.to_ascii_lowercase().as_str() {
             "count" => {
                 *result += 1.;
+                return Ok(result.to_string());
+            }
+            "sum" => {
+                *result += eval_expr(&args[0], cols, ctx, row_cursor).and_then(|val| {
+                    val.parse::<f64>()
+                        .map_err(|_| EvalError::Coerce("String".to_string(), "f64".to_string()))
+                })?;
                 return Ok(result.to_string());
             }
             _ => return Err(format!("Unknown function {name}").into()),
