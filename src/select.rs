@@ -3,7 +3,7 @@ use std::{collections::HashMap, error::Error, io::Write};
 use crate::{
     Table,
     db::Database,
-    eval::{EvalError, aggregate_expr, coerce_bool, eval_expr, find_aggregate_fn},
+    eval::{AggregateResult, EvalError, aggregate_expr, coerce_bool, eval_expr, find_aggregate_fn},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -512,7 +512,13 @@ fn exec_select_sub(
             row_cursor.iter().all(|r| r.row.is_some())
         } else {
             ctx.sql.join.iter().all(|join| {
-                let val = eval_expr(&join.condition, &cols, ctx, &row_cursor);
+                let val = eval_expr(
+                    &join.condition,
+                    &cols,
+                    ctx,
+                    &row_cursor,
+                    &AggregateResult::default(),
+                );
                 match val {
                     Ok(val) => coerce_bool(&val),
                     Err(EvalError::CursorNone(table_idx)) => {
@@ -535,17 +541,23 @@ fn exec_select_sub(
                 .condition
                 .as_ref()
                 .map_or(Ok::<bool, Box<dyn Error>>(true), |cond| {
-                    Ok(coerce_bool(&eval_expr(cond, cols, ctx, row_cursor)?))
+                    Ok(coerce_bool(&eval_expr(
+                        cond,
+                        cols,
+                        ctx,
+                        row_cursor,
+                        &AggregateResult::default(),
+                    )?))
                 })?;
         Ok(res)
     };
 
     if let Some(_addr) = cols.iter().find_map(|col| find_aggregate_fn(col, ctx)) {
-        let mut res: Vec<_> = cols.iter().map(|_| 0.).collect();
+        let mut results = AggregateResult::default();
         loop {
-            for (col, result) in cols.iter().zip(res.iter_mut()) {
+            for col in cols {
                 if check_print(&row_cursor)? {
-                    let _ = aggregate_expr(col, cols, ctx, &row_cursor, result)?;
+                    let _ = aggregate_expr(col, cols, ctx, &row_cursor, &mut results)?;
                 }
             }
             if !incr_row_cursor(&mut row_cursor, &row_counts)
@@ -554,7 +566,16 @@ fn exec_select_sub(
                 break;
             }
         }
-        out.output(&res.iter().map(|v| v.to_string()).collect::<Vec<_>>())?;
+        let values = cols
+            .iter()
+            .map(|ex| match eval_expr(ex, cols, ctx, &row_cursor, &results) {
+                Ok(res) => Ok(res),
+                Err(EvalError::CursorNone(_)) => Ok("".to_string()),
+                Err(e) => Err(e),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .inspect_err(|e| println!("Cell eval error: {e}"))?;
+        out.output(&values)?;
         return Ok(());
     }
 
@@ -570,13 +591,16 @@ fn exec_select_sub(
             for rc in row_cursor.iter_mut() {
                 rc.shown = true;
             }
+            let aggregates = AggregateResult::default();
             let values = cols
                 .iter()
-                .map(|ex| match eval_expr(ex, cols, ctx, &row_cursor) {
-                    Ok(res) => Ok(res),
-                    Err(EvalError::CursorNone(_)) => Ok("".to_string()),
-                    Err(e) => Err(e),
-                })
+                .map(
+                    |ex| match eval_expr(ex, cols, ctx, &row_cursor, &aggregates) {
+                        Ok(res) => Ok(res),
+                        Err(EvalError::CursorNone(_)) => Ok("".to_string()),
+                        Err(e) => Err(e),
+                    },
+                )
                 .collect::<Result<Vec<_>, _>>()
                 .inspect_err(|e| println!("Cell eval error: {e}"))?;
             if offset <= printed_rows {

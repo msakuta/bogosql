@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::select::{BinOp, Expr, QueryContext, RowCursor, UniOp};
 
 #[derive(Clone, Debug)]
@@ -32,6 +34,7 @@ pub(crate) fn eval_expr(
     cols: &[Expr],
     ctx: &QueryContext,
     row_cursor: &[RowCursor],
+    aggregates: &AggregateResult,
 ) -> Result<String, EvalError> {
     match expr {
         Expr::Column(col) => {
@@ -47,12 +50,12 @@ pub(crate) fn eval_expr(
                         .ok_or_else(|| EvalError::ColNotFound(format!("{i}")))?,
                 )
                 .ok_or_else(|| EvalError::ColNotFound(format!("{i}")))?;
-            eval_expr(col, cols, ctx, row_cursor)
+            eval_expr(col, cols, ctx, row_cursor, aggregates)
         }
         Expr::StrLiteral(lit) => Ok(lit.clone()),
         Expr::Binary { op, lhs, rhs } => {
-            let lhs = eval_expr(lhs, cols, ctx, row_cursor)?;
-            let rhs = eval_expr(rhs, cols, ctx, row_cursor)?;
+            let lhs = eval_expr(lhs, cols, ctx, row_cursor, aggregates)?;
+            let rhs = eval_expr(rhs, cols, ctx, row_cursor, aggregates)?;
             let res = match op {
                 BinOp::Eq => lhs == rhs,
                 BinOp::Ne => lhs != rhs,
@@ -66,14 +69,33 @@ pub(crate) fn eval_expr(
             Ok((if res { "1" } else { "0" }).to_string())
         }
         Expr::Unary { op, operand } => {
-            let val = eval_expr(operand, cols, ctx, row_cursor)?;
+            let val = eval_expr(operand, cols, ctx, row_cursor, aggregates)?;
             let res = match op {
                 UniOp::Not => !coerce_bool(&val),
             };
             Ok((if res { "1" } else { "0" }).to_string())
         }
-        Expr::AggregateFn { name, .. } => Err(EvalError::AggregateCall(name.clone())),
+        Expr::AggregateFn { name, .. } => aggregates
+            .get(&(expr as *const _ as usize))
+            .and_then(|entry| {
+                Some(match name.to_ascii_lowercase().as_str() {
+                    "count" => entry.count.to_string(),
+                    "sum" => entry.sum.to_string(),
+                    "avg" => (entry.sum / entry.count as f64).to_string(),
+                    _ => return None,
+                })
+            })
+            .ok_or_else(|| EvalError::AggregateCall(name.clone())),
     }
+}
+
+/// Mapping from node address to the amount
+pub(crate) type AggregateResult = HashMap<usize, AggregateEntry>;
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct AggregateEntry {
+    sum: f64,
+    count: usize,
 }
 
 pub(crate) fn aggregate_expr(
@@ -81,7 +103,7 @@ pub(crate) fn aggregate_expr(
     cols: &[Expr],
     ctx: &QueryContext,
     row_cursor: &[RowCursor],
-    result: &mut f64,
+    results: &mut AggregateResult,
 ) -> Result<String, Box<dyn std::error::Error>> {
     match expr {
         Expr::ColIdx(i) => {
@@ -94,11 +116,11 @@ pub(crate) fn aggregate_expr(
             if expr as *const _ == col as *const _ {
                 return Err("Recurse".into());
             }
-            aggregate_expr(col, cols, ctx, row_cursor, result)
+            aggregate_expr(col, cols, ctx, row_cursor, results)
         }
         Expr::Binary { op, lhs, rhs } => {
-            let lhs = aggregate_expr(lhs, cols, ctx, row_cursor, result)?;
-            let rhs = aggregate_expr(rhs, cols, ctx, row_cursor, result)?;
+            let lhs = aggregate_expr(lhs, cols, ctx, row_cursor, results)?;
+            let rhs = aggregate_expr(rhs, cols, ctx, row_cursor, results)?;
             let res = match op {
                 BinOp::Eq => lhs == rhs,
                 BinOp::Ne => lhs != rhs,
@@ -112,7 +134,7 @@ pub(crate) fn aggregate_expr(
             Ok((if res { "1" } else { "0" }).to_string())
         }
         Expr::Unary { op, operand } => {
-            let val = aggregate_expr(operand, cols, ctx, row_cursor, result)?;
+            let val = aggregate_expr(operand, cols, ctx, row_cursor, results)?;
             let res = match op {
                 UniOp::Not => !coerce_bool(&val),
             };
@@ -120,20 +142,26 @@ pub(crate) fn aggregate_expr(
         }
         Expr::AggregateFn { name, args } => match name.to_ascii_lowercase().as_str() {
             "count" => {
-                *result += 1.;
-                return Ok(result.to_string());
+                let entry = results.entry(expr as *const _ as usize);
+                let count = &mut entry.or_default().count;
+                *count += 1;
+                return Ok(count.to_string());
             }
-            "sum" => {
-                *result += eval_expr(&args[0], cols, ctx, row_cursor).and_then(|val| {
+            "sum" | "avg" => {
+                let add = eval_expr(&args[0], cols, ctx, row_cursor, results).and_then(|val| {
                     val.parse::<f64>()
                         .map_err(|_| EvalError::Coerce("String".to_string(), "f64".to_string()))
                 })?;
-                return Ok(result.to_string());
+                let entry = results.entry(expr as *const _ as usize);
+                let values = &mut entry.or_default();
+                values.count += 1;
+                values.sum += add;
+                return Ok((values.sum / values.count as f64).to_string());
             }
             _ => return Err(format!("Unknown function {name}").into()),
         },
         _ => {
-            return Ok(eval_expr(expr, cols, ctx, row_cursor)?);
+            return Ok(eval_expr(expr, cols, ctx, row_cursor, results)?);
         }
     }
 }
