@@ -19,9 +19,15 @@ init().then(() => {
 function onQuery() {
     const query = document.getElementById("query");
     const queryValue = query.value;
-    const res = run_query(queryValue);
-    const resultElem = document.getElementById("result");
-    resultElem.value = res;
+    try {
+        const res = run_query(queryValue);
+        const resultElem = document.getElementById("result");
+        resultElem.value = res;
+    }
+    catch(e) {
+        const resultElem = document.getElementById("result");
+        resultElem.value = `ERROR: ${e}`;
+    }
 }
 
 const button = document.getElementById("runQuery");
