@@ -11,6 +11,8 @@ pub(crate) enum EvalError {
     AggregateCall(String),
     /// When a type coercion fails from the first type to the second
     Coerce(String, String),
+    /// When an aggregate function does not allow wildcard arguments, e.g. not count(*)
+    DisallowedWildcard(String),
 }
 
 impl std::fmt::Display for EvalError {
@@ -23,6 +25,9 @@ impl std::fmt::Display for EvalError {
                 write!(f, "Aggregate function {name} is called in scalar context")
             }
             Self::Coerce(from, to) => write!(f, "Coercion from {from} to {to}"),
+            Self::DisallowedWildcard(name) => {
+                write!(f, "{name} function cannot have wildcard argument")
+            }
         }
     }
 }
@@ -75,25 +80,48 @@ pub(crate) fn eval_expr(
             };
             Ok((if res { "1" } else { "0" }).to_string())
         }
-        Expr::AggregateFn { name, .. } => aggregates
-            .get(&(expr as *const _ as usize))
-            .and_then(|entry| {
-                Some(match name.to_ascii_lowercase().as_str() {
-                    "count" => entry.count.to_string(),
-                    "sum" => entry.sum.to_string(),
-                    "avg" => (entry.sum / entry.count as f64).to_string(),
-                    _ => return None,
-                })
-            })
-            .ok_or_else(|| EvalError::AggregateCall(name.clone())),
+        Expr::AggregateFn { name, .. } => match name.to_ascii_lowercase().as_str() {
+            "count" => aggregates
+                .count
+                .get(&(expr as *const _ as usize))
+                .map(|v| v.to_string()),
+            "sum" => aggregates
+                .sum
+                .get(&(expr as *const _ as usize))
+                .map(|v| v.to_string()),
+            "avg" => aggregates
+                .avg
+                .get(&(expr as *const _ as usize))
+                .map(|entry| (entry.sum / entry.count as f64).to_string()),
+            "min" => aggregates
+                .min
+                .get(&(expr as *const _ as usize))
+                .map(|entry| entry.to_string()),
+            "max" => aggregates
+                .max
+                .get(&(expr as *const _ as usize))
+                .map(|entry| entry.to_string()),
+            _ => return Err(EvalError::AggregateCall(name.clone())),
+        }
+        .ok_or_else(|| EvalError::AggregateCall(name.clone())),
     }
 }
 
-/// Mapping from node address to the amount
-pub(crate) type AggregateResult = HashMap<usize, AggregateEntry>;
+/// Mapping from node address to the accumulator of the aggregate function.
+/// Since aggregate functions can appear multiple times in an expression, we cannot allocate a fixed size buffer for
+/// accumulating them. So we use hash maps from a unique id of the AST node to the accumulator.
+/// The unique id is the memory address, which means the AST is expected to keep an address.
+#[derive(Debug, Default)]
+pub(crate) struct AggregateResult {
+    pub count: HashMap<usize, usize>,
+    pub sum: HashMap<usize, f64>,
+    pub avg: HashMap<usize, AggregateAvg>,
+    pub min: HashMap<usize, f64>,
+    pub max: HashMap<usize, f64>,
+}
 
-#[derive(Clone, Copy, Default)]
-pub(crate) struct AggregateEntry {
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct AggregateAvg {
     sum: f64,
     count: usize,
 }
@@ -105,6 +133,19 @@ pub(crate) fn aggregate_expr(
     row_cursor: &[RowCursor],
     results: &mut AggregateResult,
 ) -> Result<String, Box<dyn std::error::Error>> {
+    let eval_col_spec = |name: &str, col_spec: &ColSpecifier| {
+        let ex = match col_spec {
+            ColSpecifier::Expr(ex) => ex,
+            ColSpecifier::Wildcard => {
+                return Err(EvalError::DisallowedWildcard(name.to_string()));
+            }
+        };
+        eval_expr(ex, cols, ctx, row_cursor, results).and_then(|val| {
+            val.parse::<f64>()
+                .map_err(|_| EvalError::Coerce("String".to_string(), "f64".to_string()))
+        })
+    };
+
     match expr {
         Expr::ColIdx(i) => {
             let col = cols
@@ -142,27 +183,39 @@ pub(crate) fn aggregate_expr(
         }
         Expr::AggregateFn { name, args } => match name.to_ascii_lowercase().as_str() {
             "count" => {
-                let entry = results.entry(expr as *const _ as usize);
-                let count = &mut entry.or_default().count;
+                let entry = results.count.entry(expr as *const _ as usize);
+                let count = entry.or_default();
                 *count += 1;
                 return Ok(count.to_string());
             }
-            "sum" | "avg" => {
-                let ex = match &args[0] {
-                    ColSpecifier::Expr(ex) => ex,
-                    ColSpecifier::Wildcard => {
-                        return Err(format!("{name} function cannot have wildcard argument").into());
-                    }
-                };
-                let add = eval_expr(ex, cols, ctx, row_cursor, results).and_then(|val| {
-                    val.parse::<f64>()
-                        .map_err(|_| EvalError::Coerce("String".to_string(), "f64".to_string()))
-                })?;
-                let entry = results.entry(expr as *const _ as usize);
-                let values = &mut entry.or_default();
+            "sum" => {
+                let val = eval_col_spec("sum", &args[0])?;
+                let entry = results.sum.entry(expr as *const _ as usize);
+                let values = entry.or_default();
+                *values += val;
+                return Ok(values.to_string());
+            }
+            "avg" => {
+                let val = eval_col_spec("avg", &args[0])?;
+                let entry = results.avg.entry(expr as *const _ as usize);
+                let values = entry.or_default();
                 values.count += 1;
-                values.sum += add;
+                values.sum += val;
                 return Ok((values.sum / values.count as f64).to_string());
+            }
+            "min" => {
+                let val = eval_col_spec("min", &args[0])?;
+                let entry = results.min.entry(expr as *const _ as usize);
+                let values = entry.or_default();
+                *values = values.min(val);
+                return Ok(values.to_string());
+            }
+            "max" => {
+                let val = eval_col_spec("max", &args[0])?;
+                let entry = results.max.entry(expr as *const _ as usize);
+                let values = entry.or_default();
+                *values = values.max(val);
+                return Ok(values.to_string());
             }
             _ => return Err(format!("Unknown function {name}").into()),
         },

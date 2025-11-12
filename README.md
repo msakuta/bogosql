@@ -91,7 +91,7 @@ Increasingly difficult TODOs
   * [x] Parentheses for precedence: `(a + b) * c`
   * [ ] Scalar function calls (`LENGTH`, `UPPER`, `LOWER`)
 * [ ] Aggregation and grouping
-  * [ ] Aggregate function calls (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`)
+  * [x] Aggregate function calls (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`)
   * [ ] `HAVING`
 * [ ] RIGHT JOIN
 * [ ] CROSS JOIN
