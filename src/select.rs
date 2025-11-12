@@ -23,10 +23,19 @@ pub struct TableSpecifier {
     pub alias: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ColSpecifier {
     Wildcard,
     Expr(Expr),
+}
+
+impl std::fmt::Display for ColSpecifier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Expr(ex) => ex.fmt(f),
+            Self::Wildcard => write!(f, "*"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -110,7 +119,7 @@ pub enum Expr {
     },
     AggregateFn {
         name: String,
-        args: Vec<Expr>,
+        args: Vec<ColSpecifier>,
     },
 }
 

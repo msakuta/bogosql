@@ -32,7 +32,7 @@ pub fn statement(i: &str) -> IResult<&str, Statement> {
     let (r, directive) = token(i)?;
     let (r, stmt) = match directive.to_lowercase().as_str() {
         "select" => {
-            let (r, cols) = separated_list0(tag(","), alt((col_wildcard, col_spec))).parse(r)?;
+            let (r, cols) = separated_list0(tag(","), col_spec).parse(r)?;
 
             let (r, table) = from_table(r)?;
 
@@ -305,13 +305,13 @@ fn str_literal(i: &str) -> IResult<&str, String> {
 fn fn_invoke(i: &str) -> IResult<&str, Expr> {
     let (r, name) = delimited(multispace0, ident, multispace0).parse(i)?;
     let (r, _) = delimited(multispace0, tag("("), multispace0).parse(r)?;
-    let (r, ex) = expression(r)?;
+    let (r, cs) = col_spec(r)?;
     let (r, _) = delimited(multispace0, tag(")"), multispace0).parse(r)?;
     Ok((
         r,
         Expr::AggregateFn {
             name,
-            args: vec![ex],
+            args: vec![cs],
         },
     ))
 }
@@ -335,8 +335,8 @@ fn col_wildcard(i: &str) -> IResult<&str, ColSpecifier> {
 }
 
 fn col_spec(i: &str) -> IResult<&str, ColSpecifier> {
-    let (r, res) = column_expr(i)?;
-    Ok((r, ColSpecifier::Expr(res)))
+    let (r, res) = alt((col_wildcard, column_expr.map(ColSpecifier::Expr))).parse(i)?;
+    Ok((r, res))
 }
 
 fn column_expr(i: &str) -> IResult<&str, Expr> {

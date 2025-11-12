@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::select::{BinOp, Expr, QueryContext, RowCursor, UniOp};
+use crate::select::{BinOp, ColSpecifier, Expr, QueryContext, RowCursor, UniOp};
 
 #[derive(Clone, Debug)]
 pub(crate) enum EvalError {
@@ -148,7 +148,13 @@ pub(crate) fn aggregate_expr(
                 return Ok(count.to_string());
             }
             "sum" | "avg" => {
-                let add = eval_expr(&args[0], cols, ctx, row_cursor, results).and_then(|val| {
+                let ex = match &args[0] {
+                    ColSpecifier::Expr(ex) => ex,
+                    ColSpecifier::Wildcard => {
+                        return Err(format!("{name} function cannot have wildcard argument").into());
+                    }
+                };
+                let add = eval_expr(ex, cols, ctx, row_cursor, results).and_then(|val| {
                     val.parse::<f64>()
                         .map_err(|_| EvalError::Coerce("String".to_string(), "f64".to_string()))
                 })?;
