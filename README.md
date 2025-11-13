@@ -87,7 +87,7 @@ Increasingly difficult TODOs
 * [x] LIMIT, OFFSET (screw Oracle DB)
 * [ ] DISTINCT
 * [ ] Expressions
-  * [ ] Arithmetic: `+`, `-`, `*`, `/`
+  * [x] Arithmetic: `+`, `-`, `*`, `/`
   * [x] Parentheses for precedence: `(a + b) * c`
   * [ ] Scalar function calls (`LENGTH`, `UPPER`, `LOWER`)
 * [ ] Aggregation and grouping

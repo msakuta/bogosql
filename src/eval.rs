@@ -61,17 +61,7 @@ pub(crate) fn eval_expr(
         Expr::Binary { op, lhs, rhs } => {
             let lhs = eval_expr(lhs, cols, ctx, row_cursor, aggregates)?;
             let rhs = eval_expr(rhs, cols, ctx, row_cursor, aggregates)?;
-            let res = match op {
-                BinOp::Eq => lhs == rhs,
-                BinOp::Ne => lhs != rhs,
-                BinOp::Lt => lhs < rhs,
-                BinOp::Gt => lhs > rhs,
-                BinOp::Le => lhs <= rhs,
-                BinOp::Ge => lhs >= rhs,
-                BinOp::And => coerce_bool(&lhs) && coerce_bool(&rhs),
-                BinOp::Or => coerce_bool(&lhs) || coerce_bool(&rhs),
-            };
-            Ok((if res { "1" } else { "0" }).to_string())
+            Ok(eval_bin_op(op, lhs, rhs)?)
         }
         Expr::Unary { op, operand } => {
             let val = eval_expr(operand, cols, ctx, row_cursor, aggregates)?;
@@ -105,6 +95,24 @@ pub(crate) fn eval_expr(
         }
         .ok_or_else(|| EvalError::AggregateCall(name.clone())),
     }
+}
+
+fn eval_bin_op(op: &BinOp, lhs: String, rhs: String) -> Result<String, EvalError> {
+    let res = match op {
+        BinOp::Add => (coerce_f64(&lhs) + coerce_f64(&rhs)).to_string(),
+        BinOp::Sub => (coerce_f64(&lhs) - coerce_f64(&rhs)).to_string(),
+        BinOp::Mul => (coerce_f64(&lhs) * coerce_f64(&rhs)).to_string(),
+        BinOp::Div => (coerce_f64(&lhs) / coerce_f64(&rhs)).to_string(),
+        BinOp::Eq => (lhs == rhs).to_string(),
+        BinOp::Ne => (lhs != rhs).to_string(),
+        BinOp::Lt => (lhs < rhs).to_string(),
+        BinOp::Gt => (lhs > rhs).to_string(),
+        BinOp::Le => (lhs <= rhs).to_string(),
+        BinOp::Ge => (lhs >= rhs).to_string(),
+        BinOp::And => (coerce_bool(&lhs) && coerce_bool(&rhs)).to_string(),
+        BinOp::Or => (coerce_bool(&lhs) || coerce_bool(&rhs)).to_string(),
+    };
+    Ok(res)
 }
 
 /// Mapping from node address to the accumulator of the aggregate function.
@@ -162,17 +170,7 @@ pub(crate) fn aggregate_expr(
         Expr::Binary { op, lhs, rhs } => {
             let lhs = aggregate_expr(lhs, cols, ctx, row_cursor, results)?;
             let rhs = aggregate_expr(rhs, cols, ctx, row_cursor, results)?;
-            let res = match op {
-                BinOp::Eq => lhs == rhs,
-                BinOp::Ne => lhs != rhs,
-                BinOp::Lt => lhs < rhs,
-                BinOp::Gt => lhs > rhs,
-                BinOp::Le => lhs <= rhs,
-                BinOp::Ge => lhs >= rhs,
-                BinOp::And => coerce_bool(&lhs) && coerce_bool(&rhs),
-                BinOp::Or => coerce_bool(&lhs) || coerce_bool(&rhs),
-            };
-            Ok((if res { "1" } else { "0" }).to_string())
+            Ok(eval_bin_op(op, lhs, rhs)?)
         }
         Expr::Unary { op, operand } => {
             let val = aggregate_expr(operand, cols, ctx, row_cursor, results)?;
@@ -240,4 +238,8 @@ pub(crate) fn find_aggregate_fn(expr: &Expr, ctx: &QueryContext) -> Option<usize
 
 pub(crate) fn coerce_bool(val: &str) -> bool {
     val == "1" || val.eq_ignore_ascii_case("true")
+}
+
+pub(crate) fn coerce_f64(val: &str) -> f64 {
+    val.parse().unwrap_or(0.)
 }

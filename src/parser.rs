@@ -244,13 +244,13 @@ fn comparison_op(i: &str) -> IResult<&str, BinOp> {
 }
 
 fn comparison_ex(i: &str) -> IResult<&str, Expr> {
-    let (r, lhs) = term(i)?;
+    let (r, lhs) = additive_ex(i)?;
 
     let Ok((r, op)) = comparison_op(r) else {
         return Ok((r, lhs));
     };
 
-    let (r, rhs) = term(r)?;
+    let (r, rhs) = additive_ex(r)?;
 
     Ok((
         r,
@@ -260,6 +260,66 @@ fn comparison_ex(i: &str) -> IResult<&str, Expr> {
             rhs: Box::new(rhs),
         },
     ))
+}
+
+fn additive_op(i: &str) -> IResult<&str, BinOp> {
+    let (r, op) = delimited(multispace0, alt((tag("+"), tag("-"))), multispace0).parse(i)?;
+
+    Ok((
+        r,
+        match op {
+            "+" => BinOp::Add,
+            "-" => BinOp::Sub,
+            _ => unreachable!(),
+        },
+    ))
+}
+
+fn additive_ex(i: &str) -> IResult<&str, Expr> {
+    let (r, lhs) = multiplicative_ex(i)?;
+
+    let (r, res) = fold_many0(
+        pair(additive_op, multiplicative_ex),
+        move || lhs.clone(),
+        |acc, (op, sub_ex)| Expr::Binary {
+            op,
+            lhs: Box::new(acc),
+            rhs: Box::new(sub_ex),
+        },
+    )
+    .parse(r)?;
+
+    Ok((r, res))
+}
+
+fn multiplicative_op(i: &str) -> IResult<&str, BinOp> {
+    let (r, op) = delimited(multispace0, alt((tag("*"), tag("/"))), multispace0).parse(i)?;
+
+    Ok((
+        r,
+        match op {
+            "*" => BinOp::Mul,
+            "/" => BinOp::Div,
+            _ => unreachable!(),
+        },
+    ))
+}
+
+fn multiplicative_ex(i: &str) -> IResult<&str, Expr> {
+    let (r, lhs) = term(i)?;
+
+    let (r, res) = fold_many0(
+        pair(multiplicative_op, term),
+        move || lhs.clone(),
+        |acc, (op, sub_ex)| Expr::Binary {
+            op,
+            lhs: Box::new(acc),
+            rhs: Box::new(sub_ex),
+        },
+    )
+    .parse(r)?;
+
+    Ok((r, res))
 }
 
 fn not(i: &str) -> IResult<&str, Expr> {
@@ -594,6 +654,80 @@ mod test {
                     lhs: Box::new(Expr::StrLiteral("1".to_string())),
                     rhs: Box::new(Expr::Binary {
                         op: BinOp::And,
+                        lhs: Box::new(Expr::StrLiteral("2".to_string())),
+                        rhs: Box::new(Expr::StrLiteral("3".to_string())),
+                    }),
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn test_arithm() {
+        let src = "'1' + '2' * '3'";
+        assert_eq!(
+            expression(src),
+            Ok((
+                "",
+                Expr::Binary {
+                    op: BinOp::Add,
+                    lhs: Box::new(Expr::StrLiteral("1".to_string())),
+                    rhs: Box::new(Expr::Binary {
+                        op: BinOp::Mul,
+                        lhs: Box::new(Expr::StrLiteral("2".to_string())),
+                        rhs: Box::new(Expr::StrLiteral("3".to_string())),
+                    }),
+                }
+            ))
+        );
+
+        let src = "'1' * '2' - '3'";
+        assert_eq!(
+            expression(src),
+            Ok((
+                "",
+                Expr::Binary {
+                    op: BinOp::Sub,
+                    lhs: Box::new(Expr::Binary {
+                        op: BinOp::Mul,
+                        lhs: Box::new(Expr::StrLiteral("1".to_string())),
+                        rhs: Box::new(Expr::StrLiteral("2".to_string())),
+                    }),
+                    rhs: Box::new(Expr::StrLiteral("3".to_string())),
+                }
+            ))
+        );
+    }
+
+    #[test]
+    fn test_paren_arithm() {
+        let src = "('1' + '2') * '3'";
+        assert_eq!(
+            expression(src),
+            Ok((
+                "",
+                Expr::Binary {
+                    op: BinOp::Mul,
+                    lhs: Box::new(Expr::Binary {
+                        op: BinOp::Add,
+                        lhs: Box::new(Expr::StrLiteral("1".to_string())),
+                        rhs: Box::new(Expr::StrLiteral("2".to_string())),
+                    }),
+                    rhs: Box::new(Expr::StrLiteral("3".to_string())),
+                }
+            ))
+        );
+
+        let src = "'1' * ('2' - '3')";
+        assert_eq!(
+            expression(src),
+            Ok((
+                "",
+                Expr::Binary {
+                    op: BinOp::Mul,
+                    lhs: Box::new(Expr::StrLiteral("1".to_string())),
+                    rhs: Box::new(Expr::Binary {
+                        op: BinOp::Sub,
                         lhs: Box::new(Expr::StrLiteral("2".to_string())),
                         rhs: Box::new(Expr::StrLiteral("3".to_string())),
                     }),

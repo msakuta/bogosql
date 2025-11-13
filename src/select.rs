@@ -65,6 +65,10 @@ pub enum Ordering {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
     Eq,
     Ne,
     Lt,
@@ -78,6 +82,10 @@ pub enum BinOp {
 impl std::fmt::Display for BinOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Add => f.write_str("+"),
+            Self::Sub => f.write_str("-"),
+            Self::Mul => f.write_str("*"),
+            Self::Div => f.write_str("/"),
             Self::Eq => f.write_str("="),
             Self::Ne => f.write_str("<>"),
             Self::Lt => f.write_str("<"),
@@ -566,7 +574,8 @@ fn exec_select_sub(
         loop {
             for col in cols {
                 if check_print(&row_cursor)? {
-                    let _ = aggregate_expr(col, cols, ctx, &row_cursor, &mut results)?;
+                    let _ = aggregate_expr(col, cols, ctx, &row_cursor, &mut results)
+                        .inspect_err(|e| println!("Error from aggregate_expr: {e}"))?;
                 }
             }
             if !incr_row_cursor(&mut row_cursor, &row_counts)
