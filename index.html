@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset='utf-8'>
+    <meta name='viewport' content='width=device-width,initial-scale=1'>
+
+    <title>bogosql on the web</title>
+
+    <!-- <link rel='stylesheet' href='/build/bundle.css'> -->
+
+    <!-- <script defer src='/build/bundle.js'></script> -->
+    <script type="module" src='./main.js'></script>
+    <style>
+        body {
+            background-color: #bfafaf;
+        }
+
+        .text {
+            line-height: 2.5em;
+        }
+
+        pre {
+            border: solid 1px black;
+            background-color: #afafbf;
+            padding: 0.5em;
+        }
+    </style>
+</head>
+
+<div>
+    <h1>BogoSQL Wasm playground</h1>
+    <p class="text">
+        The query runs on browser's local database. It does not send a SQL to any real SQL server. Check by F12.
+    </p>
+    <div>Tables: <span id="examples"></span></div>
+    <div>Query: </div>
+    <div>
+        <textarea id="query" rows="3" cols="100" placeholder="Enter a text...">SELECT * FROM phonebook</textarea>
+    </div>
+    <button id="runQuery">Run query</button>
+
+    <div>Result:</div>
+    <div>
+        <textarea id="result" rows="30" cols="100" readonly></textarea>
+    </div>
+
+    <h1>Examples</h1>
+
+<p>Inner join</p>
+
+<pre>
+SELECT author_id, title, name FROM authors INNER JOIN books ON author_id = author
+</pre>
+
+</p>Result:</p>
+
+<pre>
+author_id | title                        | name
+----------+------------------------------+--------------------
+1         | I, Robot                     | Issac Asimov
+1         | The Caves of Steel           | Issac Asimov
+2         | The Moon Is a Harsh Mistress | Robert A. Heinlein
+2         | Starship Troopers            | Robert A. Heinlein
+</pre>
+
+<p>Left join</p>
+
+<pre>
+SELECT * FROM authors LEFT JOIN books ON author_id = author
+</pre>
+
+<p>Result:</p>
+
+<pre>
+author_id | name               | book_id | title                        | author
+----------+--------------------+---------+------------------------------+--------
+1         | Issac Asimov       | 101     | I, Robot                     | 1
+1         | Issac Asimov       | 201     | The Caves of Steel           | 1
+2         | Robert A. Heinlein | 102     | The Moon Is a Harsh Mistress | 2
+2         | Robert A. Heinlein | 202     | Starship Troopers            | 2
+3         | Arthur C. Clarke   |         |                              |
+</pre>
+
+<p>Multiple joins:</p>
+
+<pre>
+SELECT * FROM authors INNER JOIN books ON author_id = books.author INNER JOIN characters ON book = book_id
+</pre>
+
+<p>Result:</p>
+
+<pre>
+author_id | name               | book_id | title                        | author | book | char_id | name
+----------+--------------------+---------+------------------------------+--------+------+---------+--------------
+1         | Issac Asimov       | 101     | I, Robot                     | 1      | 101  | 1       | Elijah Baley
+1         | Issac Asimov       | 101     | I, Robot                     | 1      | 101  | 2       | R. Sammy
+2         | Robert A. Heinlein | 102     | The Moon Is a Harsh Mistress | 2      | 102  | 1       | Manuel
+2         | Robert A. Heinlein | 102     | The Moon Is a Harsh Mistress | 2      | 102  | 2       | Wyoming
+</pre>
+
+<hr>
+
+<div style="text-align: center">Source on <a href="https://github.com/msakuta/bogosql">GitHub</a>.</div>
+
+</body>
+
+</html>
