@@ -29,6 +29,15 @@ pub enum ColSpecifier {
     Expr(Expr),
 }
 
+impl ColSpecifier {
+    pub(crate) fn as_expr(&self) -> Result<&Expr, EvalError> {
+        match self {
+            Self::Wildcard => Err(EvalError::DisallowedWildcard(self.to_string())),
+            Self::Expr(ex) => Ok(ex),
+        }
+    }
+}
+
 impl std::fmt::Display for ColSpecifier {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

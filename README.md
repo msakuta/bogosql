@@ -86,10 +86,10 @@ Increasingly difficult TODOs
 * [x] Ordering (`ORDER BY col`)
 * [x] LIMIT, OFFSET (screw Oracle DB)
 * [ ] DISTINCT
-* [ ] Expressions
+* [x] Expressions
   * [x] Arithmetic: `+`, `-`, `*`, `/`
   * [x] Parentheses for precedence: `(a + b) * c`
-  * [ ] Scalar function calls (`LENGTH`, `UPPER`, `LOWER`)
+  * [x] Scalar function calls (`LENGTH`, `UPPER`, `LOWER`)
 * [ ] Aggregation and grouping
   * [x] Aggregate function calls (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`)
   * [ ] `HAVING`

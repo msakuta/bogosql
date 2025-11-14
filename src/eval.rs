@@ -13,6 +13,8 @@ pub(crate) enum EvalError {
     Coerce(String, String),
     /// When an aggregate function does not allow wildcard arguments, e.g. not count(*)
     DisallowedWildcard(String),
+    /// An argument is required, but not given to a function.
+    InsufficientArg(&'static str),
 }
 
 impl std::fmt::Display for EvalError {
@@ -27,6 +29,9 @@ impl std::fmt::Display for EvalError {
             Self::Coerce(from, to) => write!(f, "Coercion from {from} to {to}"),
             Self::DisallowedWildcard(name) => {
                 write!(f, "{name} function cannot have wildcard argument")
+            }
+            Self::InsufficientArg(func) => {
+                write!(f, "{func} function requires an argument")
             }
         }
     }
@@ -70,7 +75,31 @@ pub(crate) fn eval_expr(
             };
             Ok((if res { "1" } else { "0" }).to_string())
         }
-        Expr::AggregateFn { name, .. } => match name.to_ascii_lowercase().as_str() {
+        Expr::AggregateFn { name, args } => match name.to_ascii_lowercase().as_str() {
+            "length" => {
+                let arg = args
+                    .get(0)
+                    .ok_or_else(|| EvalError::InsufficientArg("length"))?
+                    .as_expr()?;
+                let val = eval_expr(arg, cols, ctx, row_cursor, aggregates)?;
+                return Ok(val.len().to_string());
+            }
+            "upper" => {
+                let arg = args
+                    .get(0)
+                    .ok_or_else(|| EvalError::InsufficientArg("upper"))?
+                    .as_expr()?;
+                let val = eval_expr(arg, cols, ctx, row_cursor, aggregates)?;
+                return Ok(val.to_uppercase());
+            }
+            "lower" => {
+                let arg = args
+                    .get(0)
+                    .ok_or_else(|| EvalError::InsufficientArg("lower"))?
+                    .as_expr()?;
+                let val = eval_expr(arg, cols, ctx, row_cursor, aggregates)?;
+                return Ok(val.to_lowercase());
+            }
             "count" => aggregates
                 .count
                 .get(&(expr as *const _ as usize))
@@ -180,6 +209,9 @@ pub(crate) fn aggregate_expr(
             Ok((if res { "1" } else { "0" }).to_string())
         }
         Expr::AggregateFn { name, args } => match name.to_ascii_lowercase().as_str() {
+            "length" | "upper" | "lower" => {
+                return Ok(eval_expr(expr, cols, ctx, row_cursor, results)?);
+            }
             "count" => {
                 let entry = results.count.entry(expr as *const _ as usize);
                 let count = entry.or_default();
@@ -225,9 +257,10 @@ pub(crate) fn aggregate_expr(
 
 pub(crate) fn find_aggregate_fn(expr: &Expr, ctx: &QueryContext) -> Option<usize> {
     match expr {
-        Expr::AggregateFn { .. } => {
-            return Some(expr as *const _ as usize);
-        }
+        Expr::AggregateFn { name, .. } => match name.to_ascii_lowercase().as_str() {
+            "count" | "sum" | "avg" | "max" | "min" => return Some(expr as *const _ as usize),
+            _ => None,
+        },
         Expr::Binary { lhs, rhs, .. } => {
             find_aggregate_fn(lhs, ctx).or_else(|| find_aggregate_fn(rhs, ctx))
         }
